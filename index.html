@@ -215,11 +215,42 @@ table.data-table tr:last-child td{border-bottom:none;}
 }
 @media screen{ #ticket-imprimir{display:none !important;} }
 
+/* ============================================================
+   PROPINA / IMPUESTOS
+   ============================================================ */
+.propina-row{display:flex; gap:8px; margin-top:10px; flex-wrap:wrap;}
+.propina-row .btn{flex:1; min-width:64px;}
+.impuesto-line{display:flex; justify-content:space-between; padding:4px 0; font-size:12.5px; color:var(--muted);}
+
+/* ============================================================
+   BARRA DE ACCIONES CENTRADA (mesa / modales)
+   ============================================================ */
+.actions-bar{
+  display:flex; gap:10px; flex-wrap:wrap; justify-content:center; align-items:stretch;
+  margin-top:16px;
+}
+.actions-bar .btn{flex:1 1 130px; max-width:220px; padding:13px 14px;}
+
 /* Responsive */
 @media (max-width:640px){
   .modal{width:100%;}
   .form-grid{grid-template-columns:1fr;}
   .mesero-grid{grid-template-columns:1fr 1fr;}
+  .topbar{flex-direction:column; align-items:stretch; gap:8px;}
+  .topbar-actions{justify-content:center; flex-wrap:wrap;}
+  .dash-body{padding:14px 12px;}
+  .kpi-row{grid-template-columns:1fr 1fr;}
+  .tabs-row{justify-content:flex-start;}
+  .fab{left:50%; right:auto; transform:translateX(-50%); bottom:18px; width:calc(100% - 32px); max-width:320px;}
+  .fab .btn{width:100%;}
+  .actions-bar .btn{flex:1 1 100%; max-width:none;}
+  .sillas-grid{grid-template-columns:repeat(auto-fill, minmax(78px,1fr));}
+  .login-card{padding:26px 20px;}
+  .modal{padding:18px 16px 20px;}
+}
+@media (max-width:400px){
+  .kpi-row{grid-template-columns:1fr;}
+  .propina-row .btn{min-width:56px; font-size:12.5px;}
 }
 </style>
 </head>
@@ -241,6 +272,7 @@ table.data-table tr:last-child td{border-bottom:none;}
     <div class="role-btns">
       <button class="btn btn-brand" id="btnSoyMesero">Soy mesero / cobrador</button>
       <button class="btn" id="btnSoyAdmin">Soy administrador</button>
+      <button class="btn btn-ghost" id="btnSoySuperAdmin">Admin general (todos los restaurantes)</button>
     </div>
   </div>
 </div>
@@ -300,12 +332,34 @@ table.data-table tr:last-child td{border-bottom:none;}
     <div class="dash-section">
       <div class="tabs-row">
         <button class="tab-btn active" data-tab="reportes">Reportes</button>
+        <button class="tab-btn" data-tab="cruce">Cruce entregas</button>
         <button class="tab-btn" data-tab="inventario">Inventario</button>
         <button class="tab-btn" data-tab="meseros">Meseros</button>
-        <button class="tab-btn" data-tab="restaurantes">Restaurantes</button>
+        <button class="tab-btn" data-tab="impuestos">Impuestos</button>
         <button class="tab-btn" data-tab="config">Configuración</button>
       </div>
       <div id="tabContent"></div>
+    </div>
+  </div>
+</div>
+
+<!-- =========================================================
+     ADMIN GENERAL (SUPERADMIN — ve todos los restaurantes)
+     ========================================================= -->
+<div id="screen-superadmin" class="hidden dash-wrap">
+  <div class="topbar">
+    <div><div class="rest-name">Admin general</div><div class="who">Todos los restaurantes</div></div>
+    <div class="topbar-actions">
+      <button class="btn btn-sm btn-ghost" id="btnSalirSuperAdmin">Salir</button>
+    </div>
+  </div>
+  <div class="dash-body">
+    <div class="dash-section">
+      <div class="tabs-row">
+        <button class="tab-btn active" data-stab="general">Reportes generales</button>
+        <button class="tab-btn" data-stab="restaurantes">Restaurantes</button>
+      </div>
+      <div id="superTabContent"></div>
     </div>
   </div>
 </div>
@@ -350,6 +404,11 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 
 const supa = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+// URL del bridge local del lector USB ACR122U (WebSocket). Si el lector
+// está en OTRO computador de la red (no en el mismo equipo donde abres
+// esta página), cambia esto por la IP de ese equipo, ej: 'ws://192.168.1.50:4000'
+window.NFC_BRIDGE_URL = 'ws://127.0.0.1:4000';
+
 /* =============================================================
    ESTADO GLOBAL
    ============================================================= */
@@ -358,18 +417,22 @@ const state = {
   restaurante: null,       // restaurante actual (según subdominio o selector)
   mesero: null,            // mesero autenticado (o null si admin)
   esAdmin: false,
+  esSuperAdmin: false,
   adminPassword: '0000',
+  superadminPassword: 'admin123',
   mesas: [],               // cache de mesas del restaurante
   sillasPorMesa: {},       // mesaId -> [sillas]
   clientesPorMesa: {},     // mesaId -> [clientes]
   pedidosPorMesa: {},      // mesaId -> [items]
   productos: [],
+  impuestos: [],           // impuestos activos del restaurante
   meseros: [],
   meshesPorMesa: {},       // mesaId -> THREE.Group
   mesaSeleccionadaId: null,
   modo: null,              // null | 'colocando' | 'moviendo'
   moviendoMesaId: null,
   colocandoNombrePendiente: null,
+  canalRealtime: null,     // referencia al canal realtime ya suscrito (evita duplicados)
 };
 
 /* =============================================================
@@ -390,7 +453,7 @@ function money(n){
 function show(id){ document.getElementById(id).classList.remove('hidden'); }
 function hide(id){ document.getElementById(id).classList.add('hidden'); }
 function showOnly(id){
-  ['screen-login','screen-mesero-select','screen-mapa','screen-admin','screen-mesero-dash'].forEach(s=>hide(s));
+  ['screen-login','screen-mesero-select','screen-mapa','screen-admin','screen-mesero-dash','screen-superadmin'].forEach(s=>hide(s));
   show(id);
 }
 
@@ -444,7 +507,31 @@ async function iniciar(){
 
   // cargar config admin
   const { data: cfg } = await supa.from('config_admin').select('*').eq('id',1).single();
-  if(cfg) state.adminPassword = cfg.password;
+  if(cfg){
+    state.adminPassword = cfg.password;
+    if(cfg.superadmin_password) state.superadminPassword = cfg.superadmin_password;
+  }
+}
+
+/* =============================================================
+   IMPUESTOS Y TOTALES (subtotal + impuestos + propina opcional)
+   ============================================================= */
+async function cargarImpuestos(){
+  if(!state.restaurante) { state.impuestos = []; return; }
+  const { data } = await supa.from('impuestos').select('*').eq('restaurante_id', state.restaurante.id).eq('activo', true).order('nombre');
+  state.impuestos = data || [];
+}
+function calcularTotales(subtotal, propinaPct=0){
+  subtotal = Number(subtotal)||0;
+  const lineasImpuestos = state.impuestos.map(imp=>({
+    nombre: imp.nombre,
+    porcentaje: Number(imp.porcentaje),
+    valor: subtotal * (Number(imp.porcentaje)/100)
+  }));
+  const totalImpuestos = lineasImpuestos.reduce((s,l)=>s+l.valor,0);
+  const propina = (subtotal + totalImpuestos) * (Number(propinaPct||0)/100);
+  const total = subtotal + totalImpuestos + propina;
+  return { subtotal, lineasImpuestos, totalImpuestos, propinaPct:Number(propinaPct||0), propina, total };
 }
 
 document.getElementById('btnSoyMesero').addEventListener('click', async ()=>{
@@ -492,9 +579,10 @@ document.getElementById('btnSoyAdmin').addEventListener('click', ()=>{
 window.entrarAdmin = async function(){
   const pass = document.getElementById('adminPassInput').value;
   if(pass === state.adminPassword){
-    state.esAdmin = true; state.mesero = null;
+    state.esAdmin = true; state.mesero = null; state.esSuperAdmin = false;
     cerrarTodosModales();
     document.getElementById('adminRestName').textContent = state.restaurante.nombre;
+    await cargarImpuestos();
     await renderTab('reportes');
     showOnly('screen-admin');
   } else {
@@ -503,6 +591,32 @@ window.entrarAdmin = async function(){
 }
 
 window.volverLogin = function(){ showOnly('screen-login'); }
+
+document.getElementById('btnSoySuperAdmin').addEventListener('click', ()=>{
+  const overlay = abrirModal(`
+    <div class="modal-head"><h3>Acceso admin general</h3><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button></div>
+    <p class="modal-sub">Ve reportes y datos de todos los restaurantes.</p>
+    <input class="input" id="superPassInput" type="password" placeholder="Contraseña" style="margin-top:14px;text-align:center;letter-spacing:.3em;font-size:20px">
+    <button class="btn btn-brand btn-block" style="margin-top:14px" id="btnEntrarSuperAdmin">Entrar</button>
+  `);
+  document.getElementById('btnEntrarSuperAdmin').addEventListener('click', async ()=>{
+    const pass = document.getElementById('superPassInput').value;
+    if(pass === state.superadminPassword){
+      state.esSuperAdmin = true; state.esAdmin = false; state.mesero = null;
+      cerrarTodosModales();
+      await renderTabSuper('general');
+      showOnly('screen-superadmin');
+    } else {
+      toast('Contraseña incorrecta','err');
+    }
+  });
+});
+document.getElementById('btnSalirSuperAdmin').addEventListener('click', ()=>{ state.esSuperAdmin = false; showOnly('screen-login'); });
+document.querySelectorAll('#screen-superadmin .tabs-row [data-stab]').forEach(b=> b.addEventListener('click', function(){
+  document.querySelectorAll('#screen-superadmin .tabs-row [data-stab]').forEach(x=>x.classList.remove('active'));
+  this.classList.add('active');
+  renderTabSuper(this.getAttribute('data-stab'));
+}));
 
 /* =============================================================
    AUTORIZACIÓN ADMIN PARA ACCIONES PROTEGIDAS
@@ -549,6 +663,7 @@ document.getElementById('btnVerMapaAdmin').addEventListener('click', async ()=>{
   showOnly('screen-mapa');
   await cargarProductos(); await cargarMesas();
   if(!threeInicializado) initThree(); else renderMesas3D();
+  suscribirRealtime();
 });
 document.getElementById('btnVolverMapa').addEventListener('click', ()=> showOnly('screen-mapa'));
 
@@ -558,6 +673,7 @@ document.getElementById('btnVolverMapa').addEventListener('click', ()=> showOnly
 async function cargarProductos(){
   const { data } = await supa.from('productos').select('*').eq('restaurante_id', state.restaurante.id).eq('activo', true).order('categoria');
   state.productos = data || [];
+  await cargarImpuestos();
 }
 async function cargarMesas(){
   const { data: mesas } = await supa.from('mesas').select('*').eq('restaurante_id', state.restaurante.id);
@@ -587,7 +703,11 @@ async function recargarMesa(mesaId){
   actualizarMesh(mesaId);
 }
 function suscribirRealtime(){
-  supa.channel('plaza-cambios')
+  // Si ya hay un canal activo (por ejemplo, se entró y salió del mapa varias
+  // veces, o el mesero y el admin lo abrieron en la misma sesión), no crear
+  // otro: evita duplicar los eventos y refrescos del mapa.
+  if(state.canalRealtime) return;
+  state.canalRealtime = supa.channel('plaza-cambios')
     .on('postgres_changes', {event:'*', schema:'public', table:'mesas'}, payload=>{
       if(payload.new && payload.new.restaurante_id !== state.restaurante.id) return;
       recargarMesa(payload.new ? payload.new.id : payload.old.id);
@@ -878,9 +998,9 @@ window.abrirMesa = function(mesaId){
         <button class="btn" id="cuentaJuntaBtn" style="flex:1">Una sola cuenta</button>
         <button class="btn" id="cuentaSepBtn" style="flex:1">Cuentas separadas</button>
       </div>
-      <div style="display:flex;gap:10px;margin-top:16px">
-        <button class="btn btn-ghost" style="flex:1" id="btnMoverMesaLibre">Mover mesa</button>
-        <button class="btn btn-brand" style="flex:2" id="btnIniciarServicio">Iniciar servicio</button>
+      <div class="actions-bar">
+        <button class="btn btn-ghost" id="btnMoverMesaLibre">Mover mesa</button>
+        <button class="btn btn-brand" style="flex:2 1 160px" id="btnIniciarServicio">Iniciar servicio</button>
       </div>
     `, {wide:true});
     let sep = false;
@@ -942,9 +1062,9 @@ function renderModalMesaOcupada(mesaId, overlayExistente){
 
     <div class="total-row"><span>Total mesa</span><span>${money(total)}</span></div>
 
-    <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap">
-      <button class="btn btn-brand" id="btnTomarPedido" style="flex:1">🍽️ Tomar pedido</button>
-      <button class="btn" id="btnVerCuenta" style="flex:1">🧾 Ver cuenta</button>
+    <div class="actions-bar">
+      <button class="btn btn-brand" id="btnTomarPedido">🍽️ Tomar pedido</button>
+      <button class="btn" id="btnVerCuenta">🧾 Ver cuenta</button>
       <button class="btn btn-ghost" id="btnMoverMesaOcupada">Mover mesa</button>
       <button class="btn btn-danger" id="btnCerrarMesa">Cerrar mesa</button>
     </div>
@@ -983,7 +1103,7 @@ async function agregarSilla(mesaId){
 /* =============================================================
    ASIGNAR CLIENTE A SILLA + ESCANEO NFC
    ============================================================= */
-let abortNFC = null;
+let abortNFC = null; // AbortController de la lectura NFC en curso (evita listeners duplicados entre dispositivos/navegadores)
 window.abrirSilla = function(mesaId, sillaId){
   const sillas = state.sillasPorMesa[mesaId]||[];
   const silla = sillas.find(s=>s.id===sillaId);
@@ -995,11 +1115,16 @@ window.abrirSilla = function(mesaId, sillaId){
       <div class="modal-head"><h3>${cliente.nombre}</h3><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button></div>
       <p class="modal-sub">${cliente.nfc_codigo ? '📶 Pulsera vinculada: '+cliente.nfc_codigo : 'Sin pulsera NFC asignada'}</p>
       <div class="total-row" style="border-top:1px solid var(--line);padding-top:10px"><span>Consumo</span><span>${money(totalesCliente(mesaId, cliente.id))}</span></div>
-      <div style="display:flex;gap:8px;margin-top:16px">
-        <button class="btn btn-brand" style="flex:1" onclick="cerrarModalYAbrir(this,()=>abrirTomarPedido('${mesaId}','${cliente.id}'))">Tomar pedido</button>
+      <div class="actions-bar">
+        <button class="btn btn-brand" onclick="cerrarModalYAbrir(this,()=>abrirTomarPedido('${mesaId}','${cliente.id}'))">Tomar pedido</button>
+        <button class="btn" id="btnLiquidarCliente">💳 Liquidar y retirar</button>
         <button class="btn btn-danger" id="btnQuitarCliente">Quitar cliente</button>
       </div>
     `);
+    overlay.querySelector('#btnLiquidarCliente').addEventListener('click', ()=>{
+      cerrarModal(overlay);
+      abrirLiquidarCliente(mesaId, cliente.id);
+    });
     overlay.querySelector('#btnQuitarCliente').addEventListener('click', ()=>{
       pedirAutorizacionAdmin(async ()=>{
         await supa.from('sillas').update({cliente_id:null}).eq('id', sillaId);
@@ -1019,7 +1144,8 @@ window.abrirSilla = function(mesaId, sillaId){
     <div class="nfc-scan-box" id="nfcBox">
       <div class="nfc-pulse" id="nfcPulse"></div>
       <div id="nfcTexto" style="font-size:13px;color:var(--muted)">Pulsera NFC (opcional)</div>
-      <button class="btn btn-sm" style="margin-top:10px" id="btnEscanearNfc">📶 Escanear pulsera</button>
+      <button class="btn btn-sm" style="margin-top:10px" id="btnEscanearNfc">📶 Escanear con celular</button>
+      <button class="btn btn-sm btn-ghost" style="margin-top:6px" id="btnEscanearUsb">🖥️ Escanear con lector USB</button>
       <div style="margin-top:8px"><a href="#" style="font-size:12px;color:var(--muted)" id="linkManual">o escribir código manualmente</a></div>
     </div>
     <button class="btn btn-brand btn-block" style="margin-top:16px" id="btnGuardarCliente">Guardar</button>
@@ -1028,8 +1154,13 @@ window.abrirSilla = function(mesaId, sillaId){
   document.getElementById('btnEscanearNfc').addEventListener('click', ()=> iniciarEscaneoNFC((codigo)=>{
     nfcCodigo = codigo;
   }));
+  document.getElementById('btnEscanearUsb').addEventListener('click', ()=> iniciarEscaneoUSB((codigo)=>{
+    nfcCodigo = codigo;
+  }));
   document.getElementById('linkManual').addEventListener('click', (e)=>{
     e.preventDefault();
+    if(abortNFC){ abortNFC.abort(); abortNFC = null; }
+    detenerEscaneoUSB();
     const box = document.getElementById('nfcBox');
     box.innerHTML = `<label class="field" style="text-align:left">Código de pulsera</label><input class="input" id="nfcManualInput" placeholder="Código">`;
     document.getElementById('nfcManualInput').addEventListener('input', (ev)=> nfcCodigo = ev.target.value);
@@ -1046,31 +1177,167 @@ window.abrirSilla = function(mesaId, sillaId){
 }
 window.cerrarModalYAbrir = function(btn, fn){ btn.closest('.modal-overlay').remove(); fn(); }
 
-function iniciarEscaneoNFC(onCodigo){
+/*
+  NOTA SOBRE LA LECTURA NFC EN SAMSUNG (S24 Ultra) VS OPPO:
+  ----------------------------------------------------------------
+  El código anterior tenía dos bugs reales:
+
+  1) `reader.onreading = ...` se asignaba DESPUÉS de `await reader.scan()`.
+     En algunos navegadores/dispositivos (incluyendo builds de Chrome en
+     ciertos Samsung) la primera lectura puede llegar muy rápido, casi
+     al mismo tiempo que se resuelve `scan()`, así que el listener a
+     veces no alcanzaba a registrarse a tiempo. Ahora el listener se
+     registra ANTES de iniciar el escaneo.
+
+  2) `ev.serialNumber || ('NFC-'+Date.now())`. Web NFC (NDEFReader) NO
+     siempre expone el UID físico del tag: `serialNumber` puede llegar
+     vacío según el navegador/dispositivo, y eso es normal en la
+     especificación (no es "no soportado", simplemente no todos los
+     stacks Android/Chrome lo entregan igual). El bug real está en el
+     fallback: al generar un código con Date.now() cada vez que el
+     serial viene vacío, CADA lectura de la MISMA pulsera genera un
+     código DIFERENTE. Por eso "funciona" (no truena) pero nunca
+     reconoce una pulsera ya registrada en ese teléfono: el código
+     nunca es estable.
+     Ahora, si el serial viene vacío, se intenta derivar un código
+     ESTABLE a partir del contenido NDEF grabado en el tag (si tiene
+     algún registro). Si el tag no tiene NDEF y el navegador no da
+     serial, se avisa claramente al usuario en vez de inventar un
+     código falso, y se ofrece el ingreso manual.
+
+  Importante (límite real de Web NFC, como bien lo detectaste): la API
+  web NO da acceso al UID de bajo nivel del chip (Tag.getId() de
+  Android). Si tus pulseras necesitan sí o sí el UID físico, la única
+  vía 100% confiable es una app/companion Android nativa que lea
+  Tag.getId() y se lo pase a esta página (por ejemplo vía un intent,
+  un WebView con puente JS, o escribiendo el UID como texto en el
+  propio tag NDEF). Mientras tanto, este fix hace que el comportamiento
+  sea consistente y predecible en Chrome/Android con Web NFC.
+*/
+async function iniciarEscaneoNFC(onCodigo){
   const pulse = document.getElementById('nfcPulse');
   const texto = document.getElementById('nfcTexto');
   if(!('NDEFReader' in window)){
     texto.textContent = 'Web NFC no disponible en este navegador. Usa Chrome en Android (HTTPS) o escribe el código manualmente.';
     return;
   }
+  // cancela cualquier escaneo anterior antes de iniciar uno nuevo
+  if(abortNFC){ abortNFC.abort(); abortNFC = null; }
+  const controller = new AbortController();
+  abortNFC = controller;
+
   pulse.classList.add('scanning');
   texto.textContent = 'Acerca la pulsera al lector NFC…';
-  (async ()=>{
-    try{
-      const reader = new NDEFReader();
-      await reader.scan();
-      reader.onreading = (ev)=>{
-        const codigo = ev.serialNumber || ('NFC-'+Date.now());
-        pulse.classList.remove('scanning');
-        mostrarLecturaExitosa(codigo);
-        onCodigo(codigo);
-      };
-      reader.onreadingerror = ()=>{ texto.textContent = 'No se pudo leer. Intenta de nuevo.'; pulse.classList.remove('scanning'); };
-    } catch(err){
-      texto.textContent = 'Permiso NFC denegado o no disponible: ' + err.message;
+
+  try{
+    const reader = new NDEFReader();
+
+    // 1) el listener se registra ANTES de llamar a scan()
+    reader.onreading = (ev)=>{
+      let codigo = ev.serialNumber || '';
+      if(!codigo){
+        // intenta derivar un código estable a partir del contenido NDEF del tag
+        codigo = derivarCodigoDesdeNDEF(ev.message);
+      }
       pulse.classList.remove('scanning');
+      if(!codigo){
+        texto.textContent = 'Este dispositivo/navegador no entregó un identificador estable para esta pulsera. Escríbelo manualmente para poder reconocerla en próximas lecturas.';
+        toast('No se obtuvo un código NFC estable. Usa el ingreso manual.', 'err');
+        return;
+      }
+      mostrarLecturaExitosa(codigo);
+      onCodigo(codigo);
+    };
+    reader.onreadingerror = ()=>{
+      texto.textContent = 'No se pudo leer la pulsera. Vuelve a intentarlo, acercándola más tiempo al lector.';
+      pulse.classList.remove('scanning');
+    };
+
+    // 2) inicia el escaneo con AbortController para poder cancelarlo
+    await reader.scan({ signal: controller.signal });
+  } catch(err){
+    pulse.classList.remove('scanning');
+    if(err && err.name === 'AbortError') return; // escaneo cancelado a propósito, no es un error real
+    if(err && err.name === 'NotAllowedError'){
+      texto.textContent = 'Permiso NFC denegado. Actívalo en los permisos del sitio (Chrome ⋮ → Información del sitio → Permisos → NFC).';
+    } else if(err && err.name === 'NotSupportedError'){
+      texto.textContent = 'Este dispositivo/navegador no soporta Web NFC. En Android usa Chrome (no Samsung Internet) sobre HTTPS.';
+    } else {
+      texto.textContent = 'No se pudo iniciar el escaneo NFC: ' + (err && err.message ? err.message : 'error desconocido');
     }
-  })();
+  }
+}
+
+// Deriva un código determinístico (mismo tag = mismo código siempre) a partir
+// de los registros NDEF grabados en la pulsera, para usarlo cuando el
+// navegador no entrega serialNumber.
+function derivarCodigoDesdeNDEF(message){
+  try{
+    if(!message || !message.records || !message.records.length) return '';
+    const decoder = new TextDecoder();
+    const partes = message.records.map(r=>{
+      if(r.data){
+        try{ return decoder.decode(r.data); }catch(e){ return Array.from(new Uint8Array(r.data.buffer||r.data)).join(','); }
+      }
+      return r.recordType || '';
+    });
+    const raw = partes.join('|');
+    if(!raw) return '';
+    // hash corto y estable (no criptográfico, solo para generar un ID reproducible)
+    let hash = 0;
+    for(let i=0;i<raw.length;i++){ hash = ((hash<<5)-hash) + raw.charCodeAt(i); hash |= 0; }
+    return 'NDEF-' + Math.abs(hash).toString(16).toUpperCase();
+  } catch(e){
+    return '';
+  }
+}
+
+/* =============================================================
+   LECTOR USB DE ESCRITORIO (ACR122U) VÍA BRIDGE LOCAL (WebSocket)
+   ----------------------------------------------------------------
+   El navegador no puede hablar PC/SC directamente con el ACR122U.
+   Se necesita un pequeño programa corriendo en el computador donde
+   está conectado el lector (el "bridge"), que sí hable PC/SC de un
+   lado y exponga un WebSocket local del otro. Esta página se conecta
+   a ese WebSocket para recibir el UID de cada tag leído.
+   El bridge (Node.js) se entrega aparte — ver README del bridge.
+   ============================================================= */
+let wsUSB = null;
+const NFC_BRIDGE_URL_DEFAULT = 'ws://127.0.0.1:4000';
+function iniciarEscaneoUSB(onCodigo){
+  const pulse = document.getElementById('nfcPulse');
+  const texto = document.getElementById('nfcTexto');
+  const url = window.NFC_BRIDGE_URL || NFC_BRIDGE_URL_DEFAULT;
+  if(pulse) pulse.classList.add('scanning');
+  if(texto) texto.textContent = 'Conectando al lector USB (' + url + ')…';
+  try{
+    if(wsUSB){ try{ wsUSB.close(); }catch(e){} wsUSB = null; }
+    const ws = new WebSocket(url);
+    wsUSB = ws;
+    ws.onopen = ()=>{ if(texto) texto.textContent = 'Lector USB conectado. Acerca la pulsera al ACR122U…'; };
+    ws.onmessage = (ev)=>{
+      let data;
+      try{ data = JSON.parse(ev.data); } catch(e){ return; }
+      if(data && data.type === 'nfc-uid' && data.uid){
+        if(pulse) pulse.classList.remove('scanning');
+        mostrarLecturaExitosa(data.uid);
+        onCodigo(data.uid);
+      } else if(data && data.type === 'nfc-error'){
+        if(texto) texto.textContent = 'Error del lector USB: ' + data.message;
+      }
+    };
+    ws.onerror = ()=>{
+      if(texto) texto.textContent = 'No se pudo conectar al bridge del lector USB. ¿Está corriendo el programa "bridge-acr122u" en este computador?';
+      if(pulse) pulse.classList.remove('scanning');
+    };
+    ws.onclose = ()=>{ if(pulse) pulse.classList.remove('scanning'); };
+  } catch(err){
+    if(texto) texto.textContent = 'Error conectando al lector USB: ' + err.message;
+    if(pulse) pulse.classList.remove('scanning');
+  }
+}
+function detenerEscaneoUSB(){
+  if(wsUSB){ try{ wsUSB.close(); }catch(e){} wsUSB = null; }
 }
 function mostrarLecturaExitosa(codigo){
   const box = document.getElementById('nfcBox');
@@ -1121,14 +1388,18 @@ window.abrirTomarPedido = function(mesaId, clientePreseleccionado){
     const zone = overlay.querySelector('#pedidoScanZone');
     const cliente = clientes.find(c=>c.id===clienteActivo);
     if(!clienteActivo){
-      zone.innerHTML = `<div class="nfc-scan-box"><div class="nfc-pulse" id="nfcPulse"></div><div id="nfcTexto" style="font-size:13px;color:var(--muted)">Escanea la pulsera del cliente o elige su cuenta arriba</div><button class="btn btn-sm" style="margin-top:10px" id="btnEscanearPedido">📶 Escanear pulsera</button></div>`;
-      overlay.querySelector('#btnEscanearPedido').addEventListener('click', ()=>{
-        iniciarEscaneoNFC((codigo)=>{
-          const encontrado = clientes.find(c=>c.nfc_codigo === codigo);
-          if(encontrado){ clienteActivo = encontrado.id; toast('Cargando a '+encontrado.nombre); pintarTodo(); }
-          else toast('Esa pulsera no está registrada en esta mesa','err');
-        });
-      });
+      zone.innerHTML = `<div class="nfc-scan-box"><div class="nfc-pulse" id="nfcPulse"></div><div id="nfcTexto" style="font-size:13px;color:var(--muted)">Escanea la pulsera del cliente o elige su cuenta arriba</div>
+        <div class="propina-row" style="justify-content:center">
+          <button class="btn btn-sm" id="btnEscanearPedido">📶 Celular</button>
+          <button class="btn btn-sm btn-ghost" id="btnEscanearPedidoUsb">🖥️ Lector USB</button>
+        </div></div>`;
+      const onLectura = (codigo)=>{
+        const encontrado = clientes.find(c=>c.nfc_codigo === codigo);
+        if(encontrado){ clienteActivo = encontrado.id; toast('Cargando a '+encontrado.nombre); pintarTodo(); }
+        else toast('Esa pulsera no está registrada en esta mesa','err');
+      };
+      overlay.querySelector('#btnEscanearPedido').addEventListener('click', ()=> iniciarEscaneoNFC(onLectura));
+      overlay.querySelector('#btnEscanearPedidoUsb').addEventListener('click', ()=> iniciarEscaneoUSB(onLectura));
       overlay.querySelector('#pedidoFormZone').classList.add('hidden');
     } else {
       zone.innerHTML = `<div class="check-anim pop" style="margin-top:10px"><svg viewBox="0 0 24 24"><path d="M4 12l5 5 11-11"/></svg></div><div style="text-align:center;margin-top:6px;font-weight:700;color:var(--libre)">Cargando a: ${cliente.nombre}</div>`;
@@ -1198,18 +1469,22 @@ window.abrirVerCuenta = function(mesaId){
   if(mesa.cuentas_separadas){
     bloque = clientes.map(c=>{
       const items = (state.pedidosPorMesa[mesaId]||[]).filter(i=>i.cliente_id===c.id);
+      const t = calcularTotales(totalesCliente(mesaId,c.id));
       return `<h4 style="margin-top:14px">${c.nombre}</h4>` +
         items.map(i=>`<div class="linea-item"><span>${i.producto_nombre} <span class="qty">x${i.cantidad}</span></span><span>${money(i.precio_unitario*i.cantidad)}</span></div>`).join('') +
-        `<div class="total-row"><span>Subtotal</span><span>${money(totalesCliente(mesaId,c.id))}</span></div>`;
+        t.lineasImpuestos.map(l=>`<div class="impuesto-line"><span>${l.nombre} (${l.porcentaje}%)</span><span>${money(l.valor)}</span></div>`).join('') +
+        `<div class="total-row"><span>Subtotal + impuestos</span><span>${money(t.total)}</span></div>`;
     }).join('');
   } else {
     const items = state.pedidosPorMesa[mesaId]||[];
     bloque = items.map(i=>`<div class="linea-item"><span>${i.producto_nombre} <span class="qty">x${i.cantidad}</span></span><span>${money(i.precio_unitario*i.cantidad)}</span></div>`).join('');
   }
+  const tMesa = calcularTotales(totalMesa(mesaId));
   abrirModal(`
     <div class="modal-head"><h3>Cuenta — ${mesa.nombre}</h3><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button></div>
     ${bloque || '<p style="color:var(--muted)">Sin productos registrados.</p>'}
-    <div class="total-row"><span>Total mesa</span><span>${money(totalMesa(mesaId))}</span></div>
+    ${!mesa.cuentas_separadas ? tMesa.lineasImpuestos.map(l=>`<div class="impuesto-line"><span>${l.nombre} (${l.porcentaje}%)</span><span>${money(l.valor)}</span></div>`).join('') : ''}
+    <div class="total-row"><span>Total mesa (con impuestos)</span><span>${money(tMesa.total)}</span></div>
   `, {wide:true});
 }
 
@@ -1217,30 +1492,49 @@ window.abrirCerrarMesa = function(mesaId){
   const mesa = state.mesas.find(m=>m.id===mesaId);
   const clientes = state.clientesPorMesa[mesaId]||[];
   const cuentas = mesa.cuentas_separadas ? clientes : [{id:'__total__', nombre:'Cuenta única'}];
+  let propinaPct = 0;
   const overlay = abrirModal(`
     <div class="modal-head"><h3>Cerrar mesa — ${mesa.nombre}</h3><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button></div>
     <p class="modal-sub">Imprime cada cuenta y luego confirma la liquidación.</p>
     <div id="cuentasParaCerrar"></div>
+    <label class="field">Propina (opcional)</label>
+    <div class="propina-row" id="propinaRow">
+      <button class="btn btn-brand" data-prop="0">Sin propina</button>
+      <button class="btn" data-prop="10">10%</button>
+      <button class="btn" data-prop="15">15%</button>
+    </div>
     <button class="btn btn-danger btn-block" style="margin-top:16px" id="btnConfirmarLiquidar">Confirmar liquidación y liberar mesa</button>
   `, {wide:true});
   const zone = overlay.querySelector('#cuentasParaCerrar');
-  zone.innerHTML = cuentas.map(c=>{
-    const total = c.id==='__total__' ? totalMesa(mesaId) : totalesCliente(mesaId, c.id);
-    return `<div class="linea-item"><span>${c.nombre}</span><span style="display:flex;gap:10px;align-items:center">${money(total)} <button class="btn btn-sm" data-imprimir="${c.id}">🖨️ Imprimir</button></span></div>`;
-  }).join('');
-  zone.querySelectorAll('[data-imprimir]').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
-      const cid = btn.getAttribute('data-imprimir');
-      const cuenta = cid==='__total__' ? {id:'__total__', nombre:'Cuenta única'} : clientes.find(c=>c.id===cid);
-      imprimirTicket(mesa, cuenta, mesaId);
+  function pintarCuentas(){
+    zone.innerHTML = cuentas.map(c=>{
+      const subtotal = c.id==='__total__' ? totalMesa(mesaId) : totalesCliente(mesaId, c.id);
+      const t = calcularTotales(subtotal, propinaPct);
+      return `<div class="linea-item"><span>${c.nombre}</span><span style="display:flex;gap:10px;align-items:center">${money(t.total)} <button class="btn btn-sm" data-imprimir="${c.id}">🖨️ Imprimir</button></span></div>`;
+    }).join('');
+    zone.querySelectorAll('[data-imprimir]').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        const cid = btn.getAttribute('data-imprimir');
+        const cuenta = cid==='__total__' ? {id:'__total__', nombre:'Cuenta única'} : clientes.find(c=>c.id===cid);
+        const subtotal = cid==='__total__' ? totalMesa(mesaId) : totalesCliente(mesaId, cid);
+        imprimirTicket(mesa, cuenta, mesaId, calcularTotales(subtotal, propinaPct));
+      });
     });
-  });
-  overlay.querySelector('#btnConfirmarLiquidar').addEventListener('click', ()=> liquidarMesa(mesaId, overlay));
+  }
+  overlay.querySelectorAll('#propinaRow [data-prop]').forEach(b=> b.addEventListener('click', function(){
+    overlay.querySelectorAll('#propinaRow [data-prop]').forEach(x=>x.classList.remove('btn-brand'));
+    this.classList.add('btn-brand');
+    propinaPct = Number(this.getAttribute('data-prop'));
+    pintarCuentas();
+  }));
+  pintarCuentas();
+  overlay.querySelector('#btnConfirmarLiquidar').addEventListener('click', ()=> liquidarMesa(mesaId, overlay, ()=>propinaPct));
 }
 
-function imprimirTicket(mesa, cuenta, mesaId){
+function imprimirTicket(mesa, cuenta, mesaId, totales){
   const items = cuenta.id==='__total__' ? (state.pedidosPorMesa[mesaId]||[]) : (state.pedidosPorMesa[mesaId]||[]).filter(i=>i.cliente_id===cuenta.id);
-  const total = items.reduce((s,i)=> s+Number(i.precio_unitario)*i.cantidad, 0);
+  const subtotal = items.reduce((s,i)=> s+Number(i.precio_unitario)*i.cantidad, 0);
+  const t = totales || calcularTotales(subtotal);
   const fecha = new Date().toLocaleString('es-CO');
   const div = document.getElementById('ticket-imprimir');
   div.innerHTML = `
@@ -1250,23 +1544,30 @@ function imprimirTicket(mesa, cuenta, mesaId){
     <hr>
     ${items.map(i=>`<div class="t-row"><span>${i.cantidad}x ${i.producto_nombre}</span><span>${money(i.precio_unitario*i.cantidad)}</span></div>`).join('')}
     <hr>
-    <div class="t-row" style="font-weight:bold"><span>TOTAL</span><span>${money(total)}</span></div>
+    <div class="t-row"><span>Subtotal</span><span>${money(t.subtotal)}</span></div>
+    ${t.lineasImpuestos.map(l=>`<div class="t-row"><span>${l.nombre} (${l.porcentaje}%)</span><span>${money(l.valor)}</span></div>`).join('')}
+    ${t.propinaPct>0 ? `<div class="t-row"><span>Propina (${t.propinaPct}%)</span><span>${money(t.propina)}</span></div>` : ''}
+    <hr>
+    <div class="t-row" style="font-weight:bold"><span>TOTAL A PAGAR</span><span>${money(t.total)}</span></div>
     <div class="t-center" style="margin-top:6px">¡Gracias por su visita!</div>
   `;
   window.print();
 }
 
-async function liquidarMesa(mesaId, overlay){
+async function liquidarMesa(mesaId, overlay, getPropinaPct){
   const mesa = state.mesas.find(m=>m.id===mesaId);
   const clientes = state.clientesPorMesa[mesaId]||[];
   const items = state.pedidosPorMesa[mesaId]||[];
-  const total = totalMesa(mesaId);
+  const propinaPct = getPropinaPct ? getPropinaPct() : 0;
+  const subtotal = totalMesa(mesaId);
+  const t = calcularTotales(subtotal, propinaPct);
   const cuentasJson = mesa.cuentas_separadas
-    ? clientes.map(c=>({cliente:c.nombre, total:totalesCliente(mesaId,c.id), items: items.filter(i=>i.cliente_id===c.id)}))
-    : [{cliente:'Cuenta única', total, items}];
+    ? clientes.map(c=>({cliente:c.nombre, total:calcularTotales(totalesCliente(mesaId,c.id), propinaPct).total, items: items.filter(i=>i.cliente_id===c.id)}))
+    : [{cliente:'Cuenta única', total:t.total, items}];
 
   await supa.from('mesas_liquidadas').insert({
-    mesa_nombre: mesa.nombre, restaurante_id: state.restaurante.id, mesero_id: mesa.mesero_id, total, cuentas: cuentasJson
+    mesa_nombre: mesa.nombre, restaurante_id: state.restaurante.id, mesero_id: mesa.mesero_id,
+    total: t.total, subtotal: t.subtotal, impuestos: t.totalImpuestos, propina: t.propina, cuentas: cuentasJson
   });
   // limpiar mesa
   await supa.from('pedidos_items').delete().eq('mesa_id', mesaId);
@@ -1278,6 +1579,75 @@ async function liquidarMesa(mesaId, overlay){
   await recargarMesa(mesaId);
   cerrarModal(overlay);
   toast('Mesa liquidada y liberada');
+}
+
+/* =============================================================
+   LIQUIDAR UN SOLO CLIENTE (se retira de la mesa sin cerrarla)
+   ============================================================= */
+window.abrirLiquidarCliente = function(mesaId, clienteId){
+  const mesa = state.mesas.find(m=>m.id===mesaId);
+  const cliente = (state.clientesPorMesa[mesaId]||[]).find(c=>c.id===clienteId);
+  if(!mesa || !cliente) return;
+  let propinaPct = 0;
+  const subtotal = totalesCliente(mesaId, clienteId);
+  const overlay = abrirModal(`
+    <div class="modal-head"><h3>Liquidar a ${cliente.nombre}</h3><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button></div>
+    <p class="modal-sub">Cobra su consumo y libéralo de la mesa. El resto de la mesa sigue activa.</p>
+    <div id="liqClienteDetalle"></div>
+    <label class="field">Propina (opcional)</label>
+    <div class="propina-row" id="propinaRowCliente">
+      <button class="btn btn-brand" data-prop="0">Sin propina</button>
+      <button class="btn" data-prop="10">10%</button>
+      <button class="btn" data-prop="15">15%</button>
+    </div>
+    <div class="actions-bar">
+      <button class="btn" id="btnImprimirCliente">🖨️ Imprimir valor a pagar</button>
+      <button class="btn btn-danger" id="btnConfirmarLiquidarCliente">Confirmar y retirar</button>
+    </div>
+  `, {wide:true});
+  function pintarDetalle(){
+    const items = (state.pedidosPorMesa[mesaId]||[]).filter(i=>i.cliente_id===clienteId);
+    const t = calcularTotales(subtotal, propinaPct);
+    overlay.querySelector('#liqClienteDetalle').innerHTML = `
+      ${items.map(i=>`<div class="linea-item"><span>${i.producto_nombre} <span class="qty">x${i.cantidad}</span></span><span>${money(i.precio_unitario*i.cantidad)}</span></div>`).join('') || '<p style="color:var(--muted);font-size:13px">Sin productos registrados.</p>'}
+      <div class="impuesto-line"><span>Subtotal</span><span>${money(t.subtotal)}</span></div>
+      ${t.lineasImpuestos.map(l=>`<div class="impuesto-line"><span>${l.nombre} (${l.porcentaje}%)</span><span>${money(l.valor)}</span></div>`).join('')}
+      ${t.propinaPct>0 ? `<div class="impuesto-line"><span>Propina (${t.propinaPct}%)</span><span>${money(t.propina)}</span></div>` : ''}
+      <div class="total-row"><span>Total a pagar</span><span>${money(t.total)}</span></div>
+    `;
+  }
+  overlay.querySelectorAll('#propinaRowCliente [data-prop]').forEach(b=> b.addEventListener('click', function(){
+    overlay.querySelectorAll('#propinaRowCliente [data-prop]').forEach(x=>x.classList.remove('btn-brand'));
+    this.classList.add('btn-brand');
+    propinaPct = Number(this.getAttribute('data-prop'));
+    pintarDetalle();
+  }));
+  pintarDetalle();
+  overlay.querySelector('#btnImprimirCliente').addEventListener('click', ()=>{
+    imprimirTicket(mesa, cliente, mesaId, calcularTotales(subtotal, propinaPct));
+  });
+  overlay.querySelector('#btnConfirmarLiquidarCliente').addEventListener('click', async ()=>{
+    await liquidarClienteIndividual(mesaId, cliente, propinaPct);
+    cerrarModal(overlay);
+  });
+}
+
+async function liquidarClienteIndividual(mesaId, cliente, propinaPct){
+  const mesa = state.mesas.find(m=>m.id===mesaId);
+  const items = (state.pedidosPorMesa[mesaId]||[]).filter(i=>i.cliente_id===cliente.id);
+  const t = calcularTotales(totalesCliente(mesaId, cliente.id), propinaPct);
+
+  await supa.from('clientes_liquidados').insert({
+    mesa_nombre: mesa.nombre, restaurante_id: state.restaurante.id, mesero_id: mesa.mesero_id,
+    cliente_nombre: cliente.nombre, subtotal: t.subtotal, impuestos: t.totalImpuestos, propina: t.propina, total: t.total,
+    items: items
+  });
+  await supa.from('pedidos_items').delete().eq('cliente_id', cliente.id);
+  await supa.from('sillas').update({cliente_id:null}).eq('id', cliente.silla_id);
+  await supa.from('clientes').delete().eq('id', cliente.id);
+  await recargarMesa(mesaId);
+  refrescarModalMesaSiAbierto(mesaId);
+  toast(cliente.nombre + ' liquidado y retirado de la mesa');
 }
 
 /* =============================================================
@@ -1406,6 +1776,28 @@ async function renderTab(tab){
       </tbody></table>
     `;
   }
+  if(tab==='cruce'){
+    const { data: liq } = await supa.from('mesas_liquidadas').select('*').eq('restaurante_id', state.restaurante.id).order('liquidada_en',{ascending:false});
+    const { data: ms } = await supa.from('meseros').select('*').eq('restaurante_id', state.restaurante.id).order('nombre');
+    state._cruceLiq = liq || [];
+    state._cruceMeseros = ms || [];
+    el.innerHTML = `
+      <h4>Cruce: entregado por el mesero vs. facturado en la mesa</h4>
+      <p class="modal-sub" style="margin-bottom:10px">Compara, mesa por mesa, los productos que el mesero registró como entregados contra lo que finalmente se facturó, para confirmar que todo lo cobrado corresponde a lo entregado.</p>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:6px">
+        <div style="min-width:180px"><label class="field">Mesero</label><select class="input" id="cruceMeseroSel"><option value="">Todos los meseros</option>${(ms||[]).map(m=>`<option value="${m.id}">${m.nombre}</option>`).join('')}</select></div>
+        <div style="min-width:150px"><label class="field">Desde</label><input class="input" type="date" id="cruceDesde"></div>
+        <div style="min-width:150px"><label class="field">Hasta</label><input class="input" type="date" id="cruceHasta"></div>
+      </div>
+      <div id="cruceResumen" style="margin-bottom:16px"></div>
+      <h4 style="margin-bottom:8px">Productos entregados vs. facturados</h4>
+      <table class="data-table"><thead><tr><th>Producto</th><th>Cant. entregada</th><th>Valor facturado</th></tr></thead><tbody id="cruceProdTbody"></tbody></table>
+      <h4 style="margin:18px 0 8px">Mesas liquidadas — verificación de cuadre</h4>
+      <table class="data-table"><thead><tr><th>Mesa</th><th>Mesero</th><th>Fecha</th><th>Suma de productos entregados</th><th>Subtotal facturado</th><th>Estado</th></tr></thead><tbody id="cruceMesasTbody"></tbody></table>
+    `;
+    ['cruceMeseroSel','cruceDesde','cruceHasta'].forEach(id=> document.getElementById(id).addEventListener('change', pintarCruceAdmin));
+    pintarCruceAdmin();
+  }
   if(tab==='inventario'){
     await cargarProductos();
     el.innerHTML = `<div class="row-between"><h4>Productos</h4><button class="btn btn-sm btn-brand" id="btnNuevoProdAdmin">+ Nuevo producto</button></div>
@@ -1422,13 +1814,12 @@ async function renderTab(tab){
     document.getElementById('btnNuevoMesero').addEventListener('click', ()=> formularioMesero(null));
     el.querySelectorAll('[data-editar-mesero]').forEach(b=> b.addEventListener('click', ()=> formularioMesero(b.getAttribute('data-editar-mesero'), ms)));
   }
-  if(tab==='restaurantes'){
-    el.innerHTML = `<div class="row-between"><h4>Restaurantes / subdominios</h4><button class="btn btn-sm btn-brand" id="btnNuevoRest">+ Nuevo restaurante</button></div>
-      <table class="data-table"><thead><tr><th>Nombre</th><th>Subdominio</th><th></th></tr></thead><tbody>
-      ${state.restaurantes.map(r=>`<tr><td>${r.nombre}</td><td>${r.subdominio}.tudominio.com</td><td><button class="btn btn-sm" data-editar-rest="${r.id}">✏️</button></td></tr>`).join('')}
-      </tbody></table>`;
-    document.getElementById('btnNuevoRest').addEventListener('click', ()=> formularioRestaurante(null));
-    el.querySelectorAll('[data-editar-rest]').forEach(b=> b.addEventListener('click', ()=> formularioRestaurante(b.getAttribute('data-editar-rest'))));
+  if(tab==='impuestos'){
+    el.innerHTML = `<div class="row-between"><h4>Impuestos</h4><button class="btn btn-sm btn-brand" id="btnNuevoImpuesto">+ Nuevo impuesto</button></div>
+      <p class="modal-sub" style="margin-bottom:10px">Se aplican automáticamente sobre el subtotal de cada cuenta, cliente y ticket.</p>
+      <table class="data-table"><thead><tr><th>Nombre</th><th>Porcentaje</th><th>Activo</th><th></th></tr></thead><tbody id="impAdminTbody"></tbody></table>`;
+    await pintarImpuestosAdmin();
+    document.getElementById('btnNuevoImpuesto').addEventListener('click', ()=> formularioImpuesto(null));
   }
   if(tab==='config'){
     el.innerHTML = `<h4>Cambiar contraseña de administrador</h4>
@@ -1445,11 +1836,120 @@ async function renderTab(tab){
     });
   }
 }
+function nombreMeseroCruce(id){
+  return (state._cruceMeseros||[]).find(m=>m.id===id)?.nombre || 'Sin mesero';
+}
+function pintarCruceAdmin(){
+  const selMesero = document.getElementById('cruceMeseroSel');
+  if(!selMesero) return; // la pestaña ya no está visible
+  const meseroId = selMesero.value;
+  const desdeVal = document.getElementById('cruceDesde').value;
+  const hastaVal = document.getElementById('cruceHasta').value;
+  const desde = desdeVal ? new Date(desdeVal+'T00:00:00') : null;
+  const hasta = hastaVal ? new Date(hastaVal+'T23:59:59') : null;
+
+  const liq = (state._cruceLiq||[]).filter(l=>{
+    if(meseroId && l.mesero_id !== meseroId) return false;
+    const f = new Date(l.liquidada_en);
+    if(desde && f < desde) return false;
+    if(hasta && f > hasta) return false;
+    return true;
+  });
+
+  // Cada mesa liquidada guarda en "cuentas" un snapshot de los productos que
+  // el mesero registró como entregados en esa mesa (cuentas[].items). Esa es
+  // la fuente de "lo entregado". La comparamos contra subtotal/total, que es
+  // lo que realmente quedó facturado/cobrado.
+  const porProducto = {};
+  const filasMesas = [];
+  liq.forEach(l=>{
+    const cuentas = l.cuentas || [];
+    let sumaItemsMesa = 0;
+    cuentas.forEach(c=>{
+      (c.items||[]).forEach(i=>{
+        const cant = Number(i.cantidad)||0;
+        const valor = cant * Number(i.precio_unitario||0);
+        sumaItemsMesa += valor;
+        const key = i.producto_nombre || 'Producto sin nombre';
+        porProducto[key] = porProducto[key] || { cantidad:0, valor:0 };
+        porProducto[key].cantidad += cant;
+        porProducto[key].valor += valor;
+      });
+    });
+    const subtotalRegistrado = l.subtotal!=null ? Number(l.subtotal) : sumaItemsMesa;
+    const diferencia = Math.abs(sumaItemsMesa - subtotalRegistrado);
+    filasMesas.push({
+      mesa: l.mesa_nombre, mesero: nombreMeseroCruce(l.mesero_id), fecha: l.liquidada_en,
+      sumaItems: sumaItemsMesa, subtotal: subtotalRegistrado, cuadra: diferencia < 1
+    });
+  });
+
+  const conDiferencia = filasMesas.filter(f=>!f.cuadra);
+  const quien = meseroId ? nombreMeseroCruce(meseroId) : 'los meseros';
+  const resumen = document.getElementById('cruceResumen');
+  resumen.innerHTML = filasMesas.length===0
+    ? `<div class="card" style="padding:14px 16px;color:var(--muted)">Sin mesas liquidadas en el rango seleccionado.</div>`
+    : conDiferencia.length===0
+      ? `<div class="card" style="padding:14px 16px;border-color:var(--libre);color:var(--libre);display:flex;align-items:center;gap:10px"><span style="font-size:18px">✅</span><span>Todo lo facturado coincide con lo entregado por ${quien} (${filasMesas.length} mesas revisadas).</span></div>`
+      : `<div class="card" style="padding:14px 16px;border-color:var(--danger);color:var(--danger);display:flex;align-items:center;gap:10px"><span style="font-size:18px">⚠️</span><span>${conDiferencia.length} de ${filasMesas.length} mesas tienen diferencias entre lo entregado y lo facturado. Revísalas en la tabla de abajo.</span></div>`;
+
+  document.getElementById('cruceProdTbody').innerHTML = Object.entries(porProducto)
+    .sort((a,b)=>b[1].valor-a[1].valor)
+    .map(([nombre,d])=>`<tr><td>${nombre}</td><td>${d.cantidad}</td><td>${money(d.valor)}</td></tr>`)
+    .join('') || '<tr><td colspan="3">Sin datos en el rango seleccionado</td></tr>';
+
+  document.getElementById('cruceMesasTbody').innerHTML = filasMesas
+    .map(f=>`<tr><td>${f.mesa}</td><td>${f.mesero}</td><td>${new Date(f.fecha).toLocaleString('es-CO')}</td><td>${money(f.sumaItems)}</td><td>${money(f.subtotal)}</td><td>${f.cuadra?'<span class="badge badge-libre">✅ Cuadra</span>':'<span class="badge badge-ocupada">⚠️ Diferencia</span>'}</td></tr>`)
+    .join('') || '<tr><td colspan="6">Sin mesas en el rango seleccionado</td></tr>';
+}
 function pintarInvAdmin(){
   const tbody = document.getElementById('invAdminTbody');
   if(!tbody) return;
   tbody.innerHTML = state.productos.map(p=>`<tr><td>${p.nombre}</td><td>${p.categoria}</td><td>${money(p.precio)}</td><td><button class="btn btn-sm" data-ed="${p.id}">✏️</button></td></tr>`).join('');
   tbody.querySelectorAll('[data-ed]').forEach(b=> b.addEventListener('click', ()=> formularioProducto(b.getAttribute('data-ed'), {querySelector:()=>null})));
+}
+async function pintarImpuestosAdmin(){
+  const tbody = document.getElementById('impAdminTbody');
+  if(!tbody) return;
+  const { data } = await supa.from('impuestos').select('*').eq('restaurante_id', state.restaurante.id).order('nombre');
+  const lista = data || [];
+  tbody.innerHTML = lista.map(i=>`<tr><td>${i.nombre}</td><td>${Number(i.porcentaje)}%</td><td>${i.activo?'Sí':'No'}</td><td><button class="btn btn-sm" data-ed-imp="${i.id}">✏️</button></td></tr>`).join('') || '<tr><td colspan="4">Sin impuestos configurados</td></tr>';
+  tbody.querySelectorAll('[data-ed-imp]').forEach(b=> b.addEventListener('click', ()=> formularioImpuesto(b.getAttribute('data-ed-imp'), lista)));
+}
+function formularioImpuesto(id, listaActual){
+  const i = id ? (listaActual||[]).find(x=>x.id===id) : null;
+  const overlay = abrirModal(`
+    <div class="modal-head"><h3>${i?'Editar':'Nuevo'} impuesto</h3><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button></div>
+    <label class="field">Nombre</label><input class="input" id="ifNombre" value="${i?i.nombre:''}" placeholder="Ej: IVA">
+    <label class="field">Porcentaje (%)</label><input class="input" id="ifPorcentaje" type="number" step="0.01" value="${i?Number(i.porcentaje):0}">
+    <label class="field">Activo</label><select class="input" id="ifActivo"><option value="true" ${!i||i.activo?'selected':''}>Sí</option><option value="false" ${i&&!i.activo?'selected':''}>No</option></select>
+    <div style="display:flex;gap:8px;margin-top:16px">
+      ${i?'<button class="btn btn-danger" id="ifEliminar">Eliminar</button>':''}
+      <button class="btn btn-brand" style="flex:1" id="ifGuardar">Guardar</button>
+    </div>
+  `);
+  document.getElementById('ifGuardar').addEventListener('click', async ()=>{
+    const payload = {
+      nombre: document.getElementById('ifNombre').value.trim(),
+      porcentaje: Number(document.getElementById('ifPorcentaje').value)||0,
+      activo: document.getElementById('ifActivo').value==='true',
+      restaurante_id: state.restaurante.id
+    };
+    if(!payload.nombre){ toast('Escribe el nombre del impuesto','err'); return; }
+    if(i) await supa.from('impuestos').update(payload).eq('id', i.id);
+    else await supa.from('impuestos').insert(payload);
+    await cargarImpuestos();
+    cerrarModal(overlay);
+    renderTab('impuestos');
+    toast('Impuesto guardado');
+  });
+  if(i) document.getElementById('ifEliminar').addEventListener('click', async ()=>{
+    await supa.from('impuestos').delete().eq('id', i.id);
+    await cargarImpuestos();
+    cerrarModal(overlay);
+    renderTab('impuestos');
+    toast('Impuesto eliminado');
+  });
 }
 function formularioMesero(id, listaActual){
   const m = id ? (listaActual||[]).find(x=>x.id===id) : null;
@@ -1469,7 +1969,7 @@ function formularioMesero(id, listaActual){
     toast('Mesero guardado');
   });
 }
-function formularioRestaurante(id){
+function formularioRestaurante(id, esSuper){
   const r = id ? state.restaurantes.find(x=>x.id===id) : null;
   const overlay = abrirModal(`
     <div class="modal-head"><h3>${r?'Editar':'Nuevo'} restaurante</h3><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button></div>
@@ -1484,9 +1984,53 @@ function formularioRestaurante(id){
     const { data: rests } = await supa.from('restaurantes').select('*').order('nombre');
     state.restaurantes = rests || [];
     cerrarModal(overlay);
-    renderTab('restaurantes');
+    if(esSuper) renderTabSuper('restaurantes'); else renderTab('restaurantes');
     toast('Restaurante guardado');
   });
+}
+
+/* =============================================================
+   DASHBOARD ADMIN GENERAL (SUPERADMIN — todos los restaurantes)
+   ============================================================= */
+async function renderTabSuper(tab){
+  const el = document.getElementById('superTabContent');
+  if(!el) return;
+  if(tab==='general'){
+    el.innerHTML = '<p style="color:var(--muted)">Cargando…</p>';
+    const { data: rests } = await supa.from('restaurantes').select('*').order('nombre');
+    const restaurantes = rests || [];
+    const { data: liqTodas } = await supa.from('mesas_liquidadas').select('*').order('liquidada_en',{ascending:false});
+    const liq = liqTodas || [];
+    const totalGeneral = liq.reduce((s,l)=>s+Number(l.total),0);
+    const porRestaurante = {};
+    liq.forEach(l=>{ porRestaurante[l.restaurante_id] = (porRestaurante[l.restaurante_id]||0) + Number(l.total); });
+    const nombreRest = id => restaurantes.find(r=>r.id===id)?.nombre || 'Restaurante eliminado';
+    el.innerHTML = `
+      <div class="kpi-row">
+        <div class="card kpi"><div class="num">${money(totalGeneral)}</div><div class="lbl">Total histórico (todos)</div></div>
+        <div class="card kpi"><div class="num">${restaurantes.length}</div><div class="lbl">Restaurantes activos</div></div>
+        <div class="card kpi"><div class="num">${liq.length}</div><div class="lbl">Mesas liquidadas</div></div>
+      </div>
+      <h4 style="margin-bottom:8px">Ventas por restaurante</h4>
+      <table class="data-table"><thead><tr><th>Restaurante</th><th>Total facturado</th><th>Mesas liquidadas</th></tr></thead><tbody>
+        ${restaurantes.map(r=>`<tr><td>${r.nombre}</td><td>${money(porRestaurante[r.id]||0)}</td><td>${liq.filter(l=>l.restaurante_id===r.id).length}</td></tr>`).join('') || '<tr><td colspan="3">Sin datos aún</td></tr>'}
+      </tbody></table>
+      <h4 style="margin:18px 0 8px">Últimas mesas liquidadas (todos los restaurantes)</h4>
+      <table class="data-table"><thead><tr><th>Restaurante</th><th>Mesa</th><th>Fecha</th><th>Total</th></tr></thead><tbody>
+        ${liq.slice(0,25).map(l=>`<tr><td>${nombreRest(l.restaurante_id)}</td><td>${l.mesa_nombre}</td><td>${new Date(l.liquidada_en).toLocaleString('es-CO')}</td><td>${money(l.total)}</td></tr>`).join('') || '<tr><td colspan="4">Sin datos aún</td></tr>'}
+      </tbody></table>
+    `;
+  }
+  if(tab==='restaurantes'){
+    const { data: rests } = await supa.from('restaurantes').select('*').order('nombre');
+    state.restaurantes = rests || [];
+    el.innerHTML = `<div class="row-between"><h4>Restaurantes / subdominios</h4><button class="btn btn-sm btn-brand" id="btnNuevoRestSuper">+ Nuevo restaurante</button></div>
+      <table class="data-table"><thead><tr><th>Nombre</th><th>Subdominio</th><th></th></tr></thead><tbody>
+      ${state.restaurantes.map(r=>`<tr><td>${r.nombre}</td><td>${r.subdominio}.tudominio.com</td><td><button class="btn btn-sm" data-editar-rest-super="${r.id}">✏️</button></td></tr>`).join('')}
+      </tbody></table>`;
+    document.getElementById('btnNuevoRestSuper').addEventListener('click', ()=> formularioRestaurante(null, true));
+    el.querySelectorAll('[data-editar-rest-super]').forEach(b=> b.addEventListener('click', ()=> formularioRestaurante(b.getAttribute('data-editar-rest-super'), true)));
+  }
 }
 
 /* =============================================================
