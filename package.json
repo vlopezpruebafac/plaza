@@ -1,0 +1,13 @@
+{
+  "name": "bridge-acr122u",
+  "version": "1.0.0",
+  "description": "Puente local que conecta un lector NFC USB ACR122U (PC/SC) con la web de Plaza Cashless vía WebSocket",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "nfc-pcsc": "^0.8.0",
+    "ws": "^8.18.0"
+  }
+}
