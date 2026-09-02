@@ -1,0 +1,1498 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Plaza Cashless</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+<style>
+/* ============================================================
+   TOKENS
+   ============================================================ */
+:root{
+  --bg:#11151b;
+  --panel:#1a2029;
+  --panel-2:#212934;
+  --line:#2a3340;
+  --text:#eceef1;
+  --muted:#8b93a3;
+  --brand:#d9a441;
+  --brand-2:#b98730;
+  --libre:#3fae5b;
+  --libre-dim:#1e3a27;
+  --ocupada:#d64545;
+  --ocupada-dim:#3a1f1f;
+  --info:#4b8fd6;
+  --danger:#d64545;
+  --radius:10px;
+  --font-head:'Space Grotesk', sans-serif;
+  --font-body:'Inter', sans-serif;
+}
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;height:100%;background:var(--bg);color:var(--text);font-family:var(--font-body);overflow:hidden;}
+h1,h2,h3,h4{font-family:var(--font-head);margin:0;font-weight:600;}
+button{font-family:var(--font-body);cursor:pointer;}
+input,select{font-family:var(--font-body);}
+::-webkit-scrollbar{width:8px;height:8px;}
+::-webkit-scrollbar-thumb{background:var(--line);border-radius:4px;}
+
+.hidden{display:none !important;}
+
+/* ============================================================
+   BOTONES / GENERALES
+   ============================================================ */
+.btn{
+  border:1px solid var(--line); background:var(--panel-2); color:var(--text);
+  padding:10px 16px; border-radius:8px; font-size:14px; font-weight:600;
+  transition:transform .08s ease, background .15s ease, border-color .15s ease;
+}
+.btn:active{transform:scale(.97);}
+.btn:hover{border-color:var(--brand);}
+.btn-brand{background:var(--brand); border-color:var(--brand); color:#1a1305;}
+.btn-brand:hover{background:var(--brand-2);}
+.btn-danger{background:transparent;border-color:var(--danger);color:var(--danger);}
+.btn-danger:hover{background:rgba(214,69,69,.12);}
+.btn-ghost{background:transparent;border-color:transparent;color:var(--muted);}
+.btn-ghost:hover{color:var(--text);}
+.btn-sm{padding:6px 10px;font-size:12.5px;border-radius:6px;}
+.btn-block{width:100%;}
+.btn:disabled{opacity:.4;cursor:not-allowed;}
+
+.badge{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:100px;font-size:12px;font-weight:600;}
+.badge-libre{background:var(--libre-dim);color:var(--libre);}
+.badge-ocupada{background:var(--ocupada-dim);color:var(--ocupada);}
+.badge-dot{width:7px;height:7px;border-radius:50%;background:currentColor;}
+
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);}
+
+label.field{display:block;font-size:12.5px;color:var(--muted);margin:12px 0 6px;font-weight:600;}
+input.input, select.input{
+  width:100%; padding:11px 12px; border-radius:8px; border:1px solid var(--line);
+  background:var(--panel-2); color:var(--text); font-size:14.5px;
+}
+input.input:focus, select.input:focus{outline:none;border-color:var(--brand);}
+
+.toast-wrap{position:fixed; top:16px; left:50%; transform:translateX(-50%); z-index:9999; display:flex; flex-direction:column; gap:8px; align-items:center;}
+.toast{background:var(--panel-2); border:1px solid var(--line); padding:10px 18px; border-radius:100px; font-size:13.5px; display:flex; align-items:center; gap:8px; box-shadow:0 8px 24px rgba(0,0,0,.4); animation:toastIn .2s ease;}
+.toast.ok{border-color:var(--libre); color:var(--libre);}
+.toast.err{border-color:var(--danger); color:var(--danger);}
+@keyframes toastIn{from{opacity:0; transform:translateY(-8px);} to{opacity:1; transform:translateY(0);}}
+
+/* Check animado */
+.check-anim{width:46px;height:46px;border-radius:50%;background:var(--libre-dim);display:flex;align-items:center;justify-content:center;margin:0 auto;}
+.check-anim svg{width:26px;height:26px;}
+.check-anim path{stroke:var(--libre);stroke-width:3;fill:none;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:40;stroke-dashoffset:40;animation:drawCheck .35s ease forwards;}
+@keyframes drawCheck{to{stroke-dashoffset:0;}}
+@keyframes popIn{0%{transform:scale(.6);opacity:0;}70%{transform:scale(1.08);}100%{transform:scale(1);opacity:1;}}
+.pop{animation:popIn .28s ease;}
+
+/* ============================================================
+   LOGIN
+   ============================================================ */
+#screen-login{
+  height:100%; display:flex; align-items:center; justify-content:center;
+  background:radial-gradient(circle at 30% 20%, #1c2431 0%, var(--bg) 60%);
+}
+.login-card{width:360px; max-width:92vw; padding:34px 30px; text-align:center;}
+.login-card .plaza-tag{color:var(--muted); font-size:12.5px; letter-spacing:.02em; margin-bottom:4px;}
+.login-card h1{font-size:26px; margin-bottom:22px;}
+.login-card .rest-dot{width:10px;height:10px;border-radius:50%;display:inline-block;margin-right:8px;}
+.role-btns{display:flex; flex-direction:column; gap:10px; margin-top:22px;}
+.role-btns .btn{padding:14px; font-size:15px;}
+
+/* Selector de mesero */
+.mesero-grid{display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:18px;}
+.mesero-tile{padding:18px 10px; text-align:center; border-radius:var(--radius); border:1px solid var(--line); background:var(--panel-2);}
+.mesero-tile:hover{border-color:var(--brand);}
+.mesero-tile .avatar{width:44px;height:44px;border-radius:50%;background:var(--brand);color:#1a1305;display:flex;align-items:center;justify-content:center;font-weight:700;margin:0 auto 8px;}
+
+/* ============================================================
+   MAPA (pantalla principal del mesero)
+   ============================================================ */
+#screen-mapa{height:100%; display:flex; flex-direction:column;}
+.topbar{
+  display:flex; align-items:center; justify-content:space-between; gap:10px;
+  padding:10px 16px; background:var(--panel); border-bottom:1px solid var(--line); z-index:5;
+}
+.topbar .rest-name{font-family:var(--font-head); font-size:15px;}
+.topbar .who{font-size:12px; color:var(--muted);}
+.topbar-actions{display:flex; gap:8px; align-items:center;}
+#canvas-wrap{flex:1; position:relative;}
+#three-canvas{display:block; width:100%; height:100%; touch-action:none;}
+
+.map-legend{position:absolute; left:14px; bottom:14px; display:flex; gap:14px; background:rgba(26,32,41,.9); border:1px solid var(--line); padding:8px 14px; border-radius:100px; font-size:12px;}
+.map-legend span{display:flex; align-items:center; gap:6px;}
+.dot{width:9px;height:9px;border-radius:50%;}
+
+.fab{position:absolute; right:16px; bottom:16px; z-index:6;}
+.mode-banner{
+  position:absolute; top:14px; left:50%; transform:translateX(-50%); z-index:6;
+  background:var(--brand); color:#1a1305; padding:10px 18px; border-radius:100px; font-size:13.5px; font-weight:600;
+  display:flex; gap:12px; align-items:center; box-shadow:0 8px 20px rgba(0,0,0,.4);
+}
+
+/* ============================================================
+   MODALES
+   ============================================================ */
+.modal-overlay{
+  position:fixed; inset:0; background:rgba(9,11,15,.65); backdrop-filter:blur(2px);
+  display:flex; align-items:center; justify-content:center; z-index:100; padding:16px;
+}
+.modal{
+  width:420px; max-width:100%; max-height:88vh; overflow-y:auto; padding:22px 22px 24px;
+  animation:popIn .18s ease;
+}
+.modal.wide{width:560px;}
+.modal-head{display:flex; align-items:center; justify-content:space-between; margin-bottom:4px;}
+.modal-head h3{font-size:18px;}
+.modal-close{background:none; border:none; color:var(--muted); font-size:20px; line-height:1;}
+.modal-sub{color:var(--muted); font-size:13px; margin-top:2px;}
+
+/* Sillas dentro del modal de mesa */
+.sillas-grid{display:grid; grid-template-columns:repeat(auto-fill, minmax(96px,1fr)); gap:10px; margin-top:14px;}
+.silla-tile{border:1px dashed var(--line); border-radius:10px; padding:12px 8px; text-align:center; background:var(--panel-2);}
+.silla-tile.ocupada{border-style:solid; border-color:var(--brand);}
+.silla-tile .ico{font-size:20px;}
+.silla-tile .nom{font-size:12px; margin-top:4px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+.silla-tile .nfc-chip{font-size:9.5px; color:var(--muted); margin-top:2px;}
+
+.linea-item{display:flex; justify-content:space-between; align-items:center; padding:9px 0; border-bottom:1px solid var(--line); font-size:13.5px;}
+.linea-item:last-child{border-bottom:none;}
+.linea-item .qty{color:var(--muted); font-size:12px;}
+.total-row{display:flex; justify-content:space-between; padding-top:12px; margin-top:6px; border-top:2px solid var(--line); font-weight:700; font-size:16px;}
+
+.cuenta-tab{padding:8px 14px; border-radius:100px; border:1px solid var(--line); background:var(--panel-2); font-size:12.5px; font-weight:600;}
+.cuenta-tab.active{background:var(--brand); border-color:var(--brand); color:#1a1305;}
+
+.nfc-scan-box{border:1.5px dashed var(--line); border-radius:12px; padding:20px; text-align:center; margin-top:14px;}
+.nfc-pulse{width:56px;height:56px;border-radius:50%;background:var(--info);opacity:.15;margin:0 auto 10px;position:relative;}
+.nfc-pulse::after{content:"📡";position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:24px; opacity:1;}
+.nfc-pulse.scanning{animation:pulseA 1.1s ease-in-out infinite;}
+@keyframes pulseA{0%{box-shadow:0 0 0 0 rgba(75,143,214,.5);}100%{box-shadow:0 0 0 22px rgba(75,143,214,0);}}
+
+.tabs-row{display:flex; gap:8px; border-bottom:1px solid var(--line); margin-bottom:16px; overflow-x:auto;}
+.tab-btn{padding:10px 6px; background:none; border:none; color:var(--muted); font-weight:600; font-size:13.5px; border-bottom:2px solid transparent; white-space:nowrap;}
+.tab-btn.active{color:var(--brand); border-color:var(--brand);}
+
+table.data-table{width:100%; border-collapse:collapse; font-size:13px;}
+table.data-table th{text-align:left; color:var(--muted); font-weight:600; padding:8px 6px; border-bottom:1px solid var(--line); font-size:11.5px; text-transform:uppercase; letter-spacing:.03em;}
+table.data-table td{padding:9px 6px; border-bottom:1px solid var(--line);}
+table.data-table tr:last-child td{border-bottom:none;}
+
+.kpi-row{display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:10px; margin-bottom:18px;}
+.kpi{padding:14px; }
+.kpi .num{font-family:var(--font-head); font-size:22px;}
+.kpi .lbl{color:var(--muted); font-size:11.5px; margin-top:2px;}
+
+/* ============================================================
+   DASHBOARDS (pantalla completa)
+   ============================================================ */
+.dash-wrap{height:100%; display:flex; flex-direction:column;}
+.dash-body{flex:1; overflow-y:auto; padding:20px 26px;}
+.dash-section{max-width:980px; margin:0 auto;}
+.row-between{display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; gap:10px; flex-wrap:wrap;}
+.form-grid{display:grid; grid-template-columns:1fr 1fr; gap:0 14px;}
+
+/* ============================================================
+   TICKET IMPRESIÓN 58mm
+   ============================================================ */
+#ticket-imprimir{display:none;}
+@media print{
+  body *{visibility:hidden;}
+  #ticket-imprimir, #ticket-imprimir *{visibility:visible;}
+  #ticket-imprimir{
+    display:block !important; position:absolute; left:0; top:0; width:58mm;
+    font-family:'Courier New', monospace; color:#000; font-size:11px; padding:2mm;
+  }
+  #ticket-imprimir .t-center{text-align:center;}
+  #ticket-imprimir hr{border:none; border-top:1px dashed #000; margin:4px 0;}
+  #ticket-imprimir .t-row{display:flex; justify-content:space-between;}
+  #ticket-imprimir h2{font-size:13px; margin:0 0 2px;}
+}
+@media screen{ #ticket-imprimir{display:none !important;} }
+
+/* Responsive */
+@media (max-width:640px){
+  .modal{width:100%;}
+  .form-grid{grid-template-columns:1fr;}
+  .mesero-grid{grid-template-columns:1fr 1fr;}
+}
+</style>
+</head>
+<body>
+
+<div class="toast-wrap" id="toastWrap"></div>
+
+<!-- =========================================================
+     LOGIN
+     ========================================================= -->
+<div id="screen-login">
+  <div class="card login-card">
+    <div class="plaza-tag">PLAZA CASHLESS</div>
+    <h1 id="loginRestName">Cargando…</h1>
+    <div id="restSelectorWrap" class="hidden">
+      <label class="field" style="text-align:left">Restaurante (modo prueba, sin subdominio)</label>
+      <select id="restSelector" class="input"></select>
+    </div>
+    <div class="role-btns">
+      <button class="btn btn-brand" id="btnSoyMesero">Soy mesero / cobrador</button>
+      <button class="btn" id="btnSoyAdmin">Soy administrador</button>
+    </div>
+  </div>
+</div>
+
+<!-- =========================================================
+     SELECCIÓN DE MESERO
+     ========================================================= -->
+<div id="screen-mesero-select" class="hidden" style="height:100%; display:flex; align-items:center; justify-content:center;">
+  <div class="card" style="width:400px; max-width:92vw; padding:26px;">
+    <div class="row-between"><h3>¿Quién eres?</h3><button class="btn btn-ghost btn-sm" onclick="volverLogin()">← Volver</button></div>
+    <div class="mesero-grid" id="meseroGrid"></div>
+  </div>
+</div>
+
+<!-- =========================================================
+     MAPA 3D (pantalla mesero)
+     ========================================================= -->
+<div id="screen-mapa" class="hidden">
+  <div class="topbar">
+    <div>
+      <div class="rest-name" id="topRestName">—</div>
+      <div class="who" id="topWho">—</div>
+    </div>
+    <div class="topbar-actions">
+      <button class="btn btn-sm" id="btnInventarioTop">📦 Inventario</button>
+      <button class="btn btn-sm" id="btnMisMesas">📋 Mis mesas</button>
+      <button class="btn btn-sm btn-ghost" id="btnSalirMapa">Salir</button>
+    </div>
+  </div>
+  <div id="canvas-wrap">
+    <canvas id="three-canvas"></canvas>
+    <div class="map-legend">
+      <span><span class="dot" style="background:var(--libre)"></span>Libre</span>
+      <span><span class="dot" style="background:var(--ocupada)"></span>Ocupada</span>
+    </div>
+    <div class="mode-banner hidden" id="modeBanner">
+      <span id="modeBannerText"></span>
+      <button class="btn btn-sm" style="background:#1a1305" id="modeBannerConfirm">Confirmar</button>
+      <button class="btn btn-sm btn-ghost" id="modeBannerCancel">Cancelar</button>
+    </div>
+    <button class="btn btn-brand fab" id="btnNuevaMesa">+ Nueva mesa</button>
+  </div>
+</div>
+
+<!-- =========================================================
+     ADMIN DASHBOARD
+     ========================================================= -->
+<div id="screen-admin" class="hidden dash-wrap">
+  <div class="topbar">
+    <div><div class="rest-name">Panel de administración</div><div class="who" id="adminRestName">—</div></div>
+    <div class="topbar-actions">
+      <button class="btn btn-sm" id="btnVerMapaAdmin">🗺️ Ver mapa</button>
+      <button class="btn btn-sm btn-ghost" id="btnSalirAdmin">Salir</button>
+    </div>
+  </div>
+  <div class="dash-body">
+    <div class="dash-section">
+      <div class="tabs-row">
+        <button class="tab-btn active" data-tab="reportes">Reportes</button>
+        <button class="tab-btn" data-tab="inventario">Inventario</button>
+        <button class="tab-btn" data-tab="meseros">Meseros</button>
+        <button class="tab-btn" data-tab="restaurantes">Restaurantes</button>
+        <button class="tab-btn" data-tab="config">Configuración</button>
+      </div>
+      <div id="tabContent"></div>
+    </div>
+  </div>
+</div>
+
+<!-- =========================================================
+     DASHBOARD MESERO (mis mesas)
+     ========================================================= -->
+<div id="screen-mesero-dash" class="hidden dash-wrap">
+  <div class="topbar">
+    <div><div class="rest-name">Mis mesas</div><div class="who" id="meseroDashWho">—</div></div>
+    <div class="topbar-actions"><button class="btn btn-sm btn-ghost" id="btnVolverMapa">← Volver al mapa</button></div>
+  </div>
+  <div class="dash-body">
+    <div class="dash-section">
+      <div class="kpi-row">
+        <div class="card kpi"><div class="num" id="kpiAtendidas">0</div><div class="lbl">Mesas activas</div></div>
+        <div class="card kpi"><div class="num" id="kpiLiquidadasHoy">0</div><div class="lbl">Liquidadas hoy</div></div>
+        <div class="card kpi"><div class="num" id="kpiTotalHoy">$0</div><div class="lbl">Total vendido hoy</div></div>
+      </div>
+      <div class="tabs-row">
+        <button class="tab-btn active" data-mtab="activas">Mesas atendidas</button>
+        <button class="tab-btn" data-mtab="liquidadas">Mesas liquidadas</button>
+      </div>
+      <div id="meseroDashContent"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ticket de impresión 58mm (oculto, solo se ve al imprimir) -->
+<div id="ticket-imprimir"></div>
+
+<!-- contenedor genérico de modales -->
+<div id="modalRoot"></div>
+
+<script>
+/* =============================================================
+   CONFIGURACIÓN — reemplaza con tu proyecto de Supabase
+   Ejecuta antes el archivo schema.sql en el SQL Editor de Supabase.
+   ============================================================= */
+const SUPABASE_URL = 'https://npxfdcfdjedusdfcilyn.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5weGZkY2ZkamVkdXNkZmNpbHluIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODgzMDA2NzEsImV4cCI6MjEwMzg3NjY3MX0.tF0CxeGvk--jXUb5Ac0bscqRSbntEmf1bWbj1xRSi7M';
+
+const supa = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+/* =============================================================
+   ESTADO GLOBAL
+   ============================================================= */
+const state = {
+  restaurantes: [],
+  restaurante: null,       // restaurante actual (según subdominio o selector)
+  mesero: null,            // mesero autenticado (o null si admin)
+  esAdmin: false,
+  adminPassword: '0000',
+  mesas: [],               // cache de mesas del restaurante
+  sillasPorMesa: {},       // mesaId -> [sillas]
+  clientesPorMesa: {},     // mesaId -> [clientes]
+  pedidosPorMesa: {},      // mesaId -> [items]
+  productos: [],
+  meseros: [],
+  meshesPorMesa: {},       // mesaId -> THREE.Group
+  mesaSeleccionadaId: null,
+  modo: null,              // null | 'colocando' | 'moviendo'
+  moviendoMesaId: null,
+  colocandoNombrePendiente: null,
+};
+
+/* =============================================================
+   UTILIDADES UI
+   ============================================================= */
+function toast(msg, tipo='ok'){
+  const wrap = document.getElementById('toastWrap');
+  const el = document.createElement('div');
+  el.className = 'toast ' + tipo;
+  el.textContent = msg;
+  wrap.appendChild(el);
+  setTimeout(()=>{ el.style.opacity='0'; el.style.transition='opacity .25s'; setTimeout(()=>el.remove(),250); }, 2600);
+}
+function money(n){
+  n = Number(n||0);
+  return '$' + n.toLocaleString('es-CO', {maximumFractionDigits:0});
+}
+function show(id){ document.getElementById(id).classList.remove('hidden'); }
+function hide(id){ document.getElementById(id).classList.add('hidden'); }
+function showOnly(id){
+  ['screen-login','screen-mesero-select','screen-mapa','screen-admin','screen-mesero-dash'].forEach(s=>hide(s));
+  show(id);
+}
+
+function abrirModal(html, opts={}){
+  const root = document.getElementById('modalRoot');
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `<div class="card modal ${opts.wide?'wide':''}">${html}</div>`;
+  if(!opts.persistente){
+    overlay.addEventListener('mousedown', (e)=>{ if(e.target === overlay) cerrarModal(overlay); });
+  }
+  root.appendChild(overlay);
+  return overlay;
+}
+function cerrarModal(overlay){
+  overlay.remove();
+}
+function cerrarTodosModales(){
+  document.getElementById('modalRoot').innerHTML = '';
+}
+
+/* =============================================================
+   ARRANQUE: detectar restaurante por subdominio
+   ============================================================= */
+async function iniciar(){
+  const { data: rests, error } = await supa.from('restaurantes').select('*').order('nombre');
+  if(error){ toast('No se pudo conectar a Supabase. Revisa SUPABASE_URL / ANON_KEY.', 'err'); console.error(error); return; }
+  state.restaurantes = rests || [];
+
+  const host = window.location.hostname;
+  const partes = host.split('.');
+  let slug = null;
+  if(partes.length > 2 && partes[0] !== 'www') slug = partes[0];
+
+  let rest = state.restaurantes.find(r => r.subdominio === slug);
+
+  const selWrap = document.getElementById('restSelectorWrap');
+  const sel = document.getElementById('restSelector');
+  sel.innerHTML = state.restaurantes.map(r=>`<option value="${r.id}">${r.nombre}</option>`).join('');
+
+  if(!rest){
+    selWrap.classList.remove('hidden');
+    rest = state.restaurantes[0];
+    sel.addEventListener('change', ()=>{
+      state.restaurante = state.restaurantes.find(r=>r.id===sel.value);
+      document.getElementById('loginRestName').textContent = state.restaurante ? state.restaurante.nombre : 'Plaza Cashless';
+    });
+  }
+  state.restaurante = rest || null;
+  document.getElementById('loginRestName').textContent = rest ? rest.nombre : 'No hay restaurantes configurados';
+
+  // cargar config admin
+  const { data: cfg } = await supa.from('config_admin').select('*').eq('id',1).single();
+  if(cfg) state.adminPassword = cfg.password;
+}
+
+document.getElementById('btnSoyMesero').addEventListener('click', async ()=>{
+  if(!state.restaurante){ toast('Selecciona un restaurante', 'err'); return; }
+  const { data: meseros } = await supa.from('meseros').select('*').eq('restaurante_id', state.restaurante.id).eq('activo', true).order('nombre');
+  state.meseros = meseros || [];
+  const grid = document.getElementById('meseroGrid');
+  grid.innerHTML = state.meseros.map(m => `
+    <div class="mesero-tile" onclick="seleccionarMesero('${m.id}')">
+      <div class="avatar">${m.nombre.slice(0,1).toUpperCase()}</div>
+      <div style="font-size:13px;font-weight:600">${m.nombre}</div>
+    </div>`).join('') || '<p style="color:var(--muted);grid-column:1/-1">No hay meseros creados. Pide al admin que cree uno.</p>';
+  showOnly('screen-mesero-select');
+});
+
+window.seleccionarMesero = function(id){
+  const m = state.meseros.find(x=>x.id===id);
+  const overlay = abrirModal(`
+    <div class="modal-head"><h3>Hola, ${m.nombre}</h3><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button></div>
+    <p class="modal-sub">Ingresa tu PIN para continuar</p>
+    <input class="input" id="pinInput" type="password" inputmode="numeric" placeholder="PIN" style="margin-top:14px;text-align:center;letter-spacing:.3em;font-size:20px">
+    <button class="btn btn-brand btn-block" style="margin-top:14px" onclick="verificarPin('${m.id}', this)">Entrar</button>
+  `);
+  setTimeout(()=>document.getElementById('pinInput').focus(),50);
+}
+window.verificarPin = function(id, btn){
+  const pin = document.getElementById('pinInput').value;
+  const m = state.meseros.find(x=>x.id===id);
+  if(pin === m.pin){
+    state.mesero = m; state.esAdmin = false;
+    cerrarTodosModales();
+    entrarAlMapa();
+  } else {
+    toast('PIN incorrecto', 'err');
+  }
+}
+
+document.getElementById('btnSoyAdmin').addEventListener('click', ()=>{
+  const overlay = abrirModal(`
+    <div class="modal-head"><h3>Acceso administrador</h3><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button></div>
+    <input class="input" id="adminPassInput" type="password" placeholder="Contraseña" style="margin-top:14px;text-align:center;letter-spacing:.3em;font-size:20px">
+    <button class="btn btn-brand btn-block" style="margin-top:14px" onclick="entrarAdmin(this)">Entrar</button>
+  `);
+});
+window.entrarAdmin = async function(){
+  const pass = document.getElementById('adminPassInput').value;
+  if(pass === state.adminPassword){
+    state.esAdmin = true; state.mesero = null;
+    cerrarTodosModales();
+    document.getElementById('adminRestName').textContent = state.restaurante.nombre;
+    await renderTab('reportes');
+    showOnly('screen-admin');
+  } else {
+    toast('Contraseña incorrecta', 'err');
+  }
+}
+
+window.volverLogin = function(){ showOnly('screen-login'); }
+
+/* =============================================================
+   AUTORIZACIÓN ADMIN PARA ACCIONES PROTEGIDAS
+   (mover una mesa ya existente, editar productos/valores)
+   ============================================================= */
+function pedirAutorizacionAdmin(callback){
+  const overlay = abrirModal(`
+    <div class="modal-head"><h3>🔒 Autorización requerida</h3><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button></div>
+    <p class="modal-sub">Esta acción modifica datos ya guardados. Ingresa la contraseña de admin.</p>
+    <input class="input" id="authPassInput" type="password" placeholder="Contraseña admin" style="margin-top:14px;text-align:center;letter-spacing:.3em;font-size:20px">
+    <button class="btn btn-brand btn-block" style="margin-top:14px" id="authConfirmBtn">Autorizar</button>
+  `);
+  document.getElementById('authConfirmBtn').addEventListener('click', ()=>{
+    const val = document.getElementById('authPassInput').value;
+    if(val === state.adminPassword){
+      cerrarModal(overlay);
+      callback();
+    } else {
+      toast('Contraseña incorrecta','err');
+    }
+  });
+}
+
+/* =============================================================
+   ENTRAR AL MAPA (mesero)
+   ============================================================= */
+async function entrarAlMapa(){
+  document.getElementById('topRestName').textContent = state.restaurante.nombre;
+  document.getElementById('topWho').textContent = 'Mesero: ' + state.mesero.nombre;
+  showOnly('screen-mapa');
+  await cargarProductos();
+  await cargarMesas();
+  if(!threeInicializado) initThree();
+  else renderMesas3D();
+  suscribirRealtime();
+}
+
+document.getElementById('btnSalirMapa').addEventListener('click', ()=>{ state.mesero=null; state.esAdmin=false; showOnly('screen-login'); });
+document.getElementById('btnSalirAdmin').addEventListener('click', ()=>{ state.esAdmin=false; showOnly('screen-login'); });
+document.getElementById('btnVerMapaAdmin').addEventListener('click', async ()=>{
+  state.mesero = null;
+  document.getElementById('topRestName').textContent = state.restaurante.nombre;
+  document.getElementById('topWho').textContent = 'Administrador';
+  showOnly('screen-mapa');
+  await cargarProductos(); await cargarMesas();
+  if(!threeInicializado) initThree(); else renderMesas3D();
+});
+document.getElementById('btnVolverMapa').addEventListener('click', ()=> showOnly('screen-mapa'));
+
+/* =============================================================
+   CARGA DE DATOS
+   ============================================================= */
+async function cargarProductos(){
+  const { data } = await supa.from('productos').select('*').eq('restaurante_id', state.restaurante.id).eq('activo', true).order('categoria');
+  state.productos = data || [];
+}
+async function cargarMesas(){
+  const { data: mesas } = await supa.from('mesas').select('*').eq('restaurante_id', state.restaurante.id);
+  state.mesas = mesas || [];
+  for(const m of state.mesas){
+    const { data: sillas } = await supa.from('sillas').select('*').eq('mesa_id', m.id).order('angulo');
+    state.sillasPorMesa[m.id] = sillas || [];
+    const { data: clientes } = await supa.from('clientes').select('*').eq('mesa_id', m.id);
+    state.clientesPorMesa[m.id] = clientes || [];
+    const { data: items } = await supa.from('pedidos_items').select('*').eq('mesa_id', m.id);
+    state.pedidosPorMesa[m.id] = items || [];
+  }
+  renderMesas3D();
+}
+async function recargarMesa(mesaId){
+  const { data: m } = await supa.from('mesas').select('*').eq('id', mesaId).single();
+  if(m){
+    const idx = state.mesas.findIndex(x=>x.id===mesaId);
+    if(idx>=0) state.mesas[idx] = m; else state.mesas.push(m);
+  }
+  const { data: sillas } = await supa.from('sillas').select('*').eq('mesa_id', mesaId).order('angulo');
+  state.sillasPorMesa[mesaId] = sillas || [];
+  const { data: clientes } = await supa.from('clientes').select('*').eq('mesa_id', mesaId);
+  state.clientesPorMesa[mesaId] = clientes || [];
+  const { data: items } = await supa.from('pedidos_items').select('*').eq('mesa_id', mesaId);
+  state.pedidosPorMesa[mesaId] = items || [];
+  actualizarMesh(mesaId);
+}
+function suscribirRealtime(){
+  supa.channel('plaza-cambios')
+    .on('postgres_changes', {event:'*', schema:'public', table:'mesas'}, payload=>{
+      if(payload.new && payload.new.restaurante_id !== state.restaurante.id) return;
+      recargarMesa(payload.new ? payload.new.id : payload.old.id);
+    })
+    .on('postgres_changes', {event:'*', schema:'public', table:'sillas'}, payload=>{
+      const mid = (payload.new||payload.old||{}).mesa_id;
+      if(mid) recargarMesa(mid);
+    })
+    .on('postgres_changes', {event:'*', schema:'public', table:'clientes'}, payload=>{
+      const mid = (payload.new||payload.old||{}).mesa_id;
+      if(mid) recargarMesa(mid);
+    })
+    .on('postgres_changes', {event:'*', schema:'public', table:'pedidos_items'}, payload=>{
+      const mid = (payload.new||payload.old||{}).mesa_id;
+      if(mid) recargarMesa(mid);
+    })
+    .subscribe();
+}
+
+/* =============================================================
+   MOTOR 3D (Three.js)
+   ============================================================= */
+let scene, camera, renderer, controls, raycaster, mouse, groundPlane, threeInicializado=false;
+
+function initThree(){
+  threeInicializado = true;
+  const wrap = document.getElementById('canvas-wrap');
+  const canvas = document.getElementById('three-canvas');
+
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x11151b);
+  scene.fog = new THREE.Fog(0x11151b, 30, 70);
+
+  camera = new THREE.PerspectiveCamera(50, wrap.clientWidth/wrap.clientHeight, 0.1, 200);
+  camera.position.set(0, 18, 20);
+
+  renderer = new THREE.WebGLRenderer({canvas, antialias:true});
+  renderer.setSize(wrap.clientWidth, wrap.clientHeight);
+  renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+
+  controls = new THREE.OrbitControls(camera, renderer.domElement);
+  controls.maxPolarAngle = Math.PI/2.05;
+  controls.minDistance = 6; controls.maxDistance = 45;
+  controls.target.set(0,0,0);
+
+  scene.add(new THREE.AmbientLight(0xffffff, 0.65));
+  const dir = new THREE.DirectionalLight(0xffffff, 0.7);
+  dir.position.set(10,20,10);
+  scene.add(dir);
+
+  const floorGeo = new THREE.PlaneGeometry(80,80);
+  const floorMat = new THREE.MeshStandardMaterial({color:0x1a2029});
+  groundPlane = new THREE.Mesh(floorGeo, floorMat);
+  groundPlane.rotation.x = -Math.PI/2;
+  groundPlane.userData = {type:'suelo'};
+  scene.add(groundPlane);
+
+  const grid = new THREE.GridHelper(80, 40, 0x2a3340, 0x232b36);
+  scene.add(grid);
+
+  raycaster = new THREE.Raycaster();
+  mouse = new THREE.Vector2();
+
+  window.addEventListener('resize', onResize);
+  renderer.domElement.addEventListener('pointerdown', onPointerDown);
+  renderer.domElement.addEventListener('pointermove', onPointerMove);
+  renderer.domElement.addEventListener('pointerup', onPointerUp);
+
+  renderMesas3D();
+  animate();
+}
+function onResize(){
+  const wrap = document.getElementById('canvas-wrap');
+  camera.aspect = wrap.clientWidth/wrap.clientHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(wrap.clientWidth, wrap.clientHeight);
+}
+function animate(){ requestAnimationFrame(animate); renderer.render(scene, camera); }
+
+function colorEstado(estado){ return estado === 'ocupada' ? 0xd64545 : 0x3fae5b; }
+
+function construirMeshMesa(mesa){
+  const grupo = new THREE.Group();
+  grupo.position.set(mesa.pos_x, 0, mesa.pos_z);
+  grupo.userData = {type:'mesa', mesaId:mesa.id};
+
+  const topGeo = new THREE.CylinderGeometry(1.3, 1.3, 0.18, 24);
+  const topMat = new THREE.MeshStandardMaterial({color: colorEstado(mesa.estado)});
+  const top = new THREE.Mesh(topGeo, topMat);
+  top.position.y = 0.75;
+  top.userData = {type:'mesaBase', mesaId:mesa.id};
+  grupo.add(top);
+
+  const poleGeo = new THREE.CylinderGeometry(0.12,0.16,0.75,10);
+  const pole = new THREE.Mesh(poleGeo, new THREE.MeshStandardMaterial({color:0x3a4250}));
+  pole.position.y = 0.375;
+  pole.userData = {type:'mesaBase', mesaId:mesa.id};
+  grupo.add(pole);
+
+  // etiqueta de texto simple usando sprite canvas
+  grupo.add(crearEtiqueta(mesa.nombre));
+
+  scene.add(grupo);
+  state.meshesPorMesa[mesa.id] = grupo;
+  actualizarSillas3D(mesa.id);
+  return grupo;
+}
+function crearEtiqueta(texto){
+  const cnv = document.createElement('canvas'); cnv.width=256; cnv.height=64;
+  const ctx = cnv.getContext('2d');
+  ctx.fillStyle='rgba(17,21,27,.85)'; ctx.roundRect ? ctx.roundRect(0,10,256,44,10) : ctx.fillRect(0,10,256,44);
+  ctx.fill();
+  ctx.font='bold 30px Arial'; ctx.fillStyle='#eceef1'; ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText(texto, 128, 33);
+  const tex = new THREE.CanvasTexture(cnv);
+  const mat = new THREE.SpriteMaterial({map:tex, depthTest:false});
+  const spr = new THREE.Sprite(mat);
+  spr.scale.set(2.4,0.6,1);
+  spr.position.set(0, 2.1, 0);
+  spr.userData = {type:'etiqueta'};
+  return spr;
+}
+function actualizarSillas3D(mesaId){
+  const grupo = state.meshesPorMesa[mesaId];
+  if(!grupo) return;
+  [...grupo.children].forEach(c=>{ if(c.userData.type==='silla') grupo.remove(c); });
+  const sillas = state.sillasPorMesa[mesaId] || [];
+  const radio = 2.1;
+  sillas.forEach(s=>{
+    const rad = THREE.MathUtils.degToRad(s.angulo);
+    const geo = new THREE.BoxGeometry(0.55,0.55,0.55);
+    const ocupada = !!s.cliente_id;
+    const mat = new THREE.MeshStandardMaterial({color: ocupada ? 0xd9a441 : 0x3a4250});
+    const box = new THREE.Mesh(geo, mat);
+    box.position.set(Math.sin(rad)*radio, 0.3, Math.cos(rad)*radio);
+    box.userData = {type:'silla', mesaId, sillaId:s.id};
+    grupo.add(box);
+  });
+}
+function actualizarMesh(mesaId){
+  const mesa = state.mesas.find(m=>m.id===mesaId);
+  if(!mesa) return;
+  let grupo = state.meshesPorMesa[mesaId];
+  if(!grupo){ construirMeshMesa(mesa); return; }
+  grupo.position.set(mesa.pos_x, 0, mesa.pos_z);
+  const base = grupo.children.find(c=>c.userData.type==='mesaBase' && c.geometry.type==='CylinderGeometry' && c.geometry.parameters.radiusTop===1.3);
+  if(base) base.material.color.setHex(colorEstado(mesa.estado));
+  actualizarSillas3D(mesaId);
+  if(state.mesaSeleccionadaId === mesaId) refrescarModalMesaSiAbierto(mesaId);
+}
+function renderMesas3D(){
+  if(!scene) return;
+  const idsActuales = new Set(state.mesas.map(m=>m.id));
+  Object.keys(state.meshesPorMesa).forEach(id=>{
+    if(!idsActuales.has(id)){ scene.remove(state.meshesPorMesa[id]); delete state.meshesPorMesa[id]; }
+  });
+  state.mesas.forEach(m=>{
+    if(!state.meshesPorMesa[m.id]) construirMeshMesa(m);
+    else actualizarMesh(m.id);
+  });
+}
+
+/* -------- interacción: click / arrastre -------- */
+let arrastrando = false;
+function coordsMouse(e){
+  const rect = renderer.domElement.getBoundingClientRect();
+  mouse.x = ((e.clientX-rect.left)/rect.width)*2-1;
+  mouse.y = -((e.clientY-rect.top)/rect.height)*2+1;
+}
+function raycastSuelo(){
+  raycaster.setFromCamera(mouse, camera);
+  const hit = raycaster.intersectObject(groundPlane)[0];
+  return hit ? hit.point : null;
+}
+function raycastObjetos(){
+  raycaster.setFromCamera(mouse, camera);
+  const objetos = [];
+  Object.values(state.meshesPorMesa).forEach(g=>g.children.forEach(c=>{ if(c.userData.type==='mesaBase'||c.userData.type==='silla') objetos.push(c); }));
+  return raycaster.intersectObjects(objetos)[0];
+}
+
+function onPointerDown(e){
+  coordsMouse(e);
+  if(state.modo === 'colocando'){
+    const p = raycastSuelo();
+    if(p){ crearMesaEnPosicion(p.x, p.z); }
+    return;
+  }
+  if(state.modo === 'moviendo'){
+    arrastrando = true;
+    controls.enabled = false;
+    moverMesaAlPuntero();
+    return;
+  }
+  const hit = raycastObjetos();
+  if(hit){
+    const ud = hit.object.userData;
+    if(ud.type === 'mesaBase') abrirMesa(ud.mesaId);
+    if(ud.type === 'silla') abrirSilla(ud.mesaId, ud.sillaId);
+  }
+}
+function onPointerMove(e){
+  if(state.modo==='moviendo' && arrastrando){ coordsMouse(e); moverMesaAlPuntero(); }
+}
+function onPointerUp(){
+  if(state.modo==='moviendo'){ arrastrando=false; controls.enabled = true; }
+}
+function moverMesaAlPuntero(){
+  const p = raycastSuelo();
+  if(!p) return;
+  const grupo = state.meshesPorMesa[state.moviendoMesaId];
+  if(grupo) grupo.position.set(p.x, 0, p.z);
+}
+
+/* -------- crear mesa -------- */
+document.getElementById('btnNuevaMesa').addEventListener('click', ()=>{
+  const overlay = abrirModal(`
+    <div class="modal-head"><h3>Nueva mesa</h3><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button></div>
+    <label class="field">Nombre o número de mesa</label>
+    <input class="input" id="nombreMesaInput" placeholder="Ej: Mesa 12">
+    <button class="btn btn-brand btn-block" style="margin-top:16px" id="confirmarNombreMesa">Continuar</button>
+  `);
+  document.getElementById('confirmarNombreMesa').addEventListener('click', ()=>{
+    const nombre = document.getElementById('nombreMesaInput').value.trim();
+    if(!nombre){ toast('Escribe un nombre para la mesa','err'); return; }
+    state.colocandoNombrePendiente = nombre;
+    state.modo = 'colocando';
+    cerrarModal(overlay);
+    document.getElementById('modeBannerText').textContent = 'Toca el mapa para ubicar "'+nombre+'"';
+    document.getElementById('modeBannerConfirm').classList.add('hidden');
+    show('modeBanner');
+  });
+});
+document.getElementById('modeBannerCancel').addEventListener('click', cancelarModo);
+document.getElementById('modeBannerConfirm').addEventListener('click', confirmarModoMover);
+
+function cancelarModo(){
+  if(state.modo==='moviendo'){ renderMesas3D(); } // revertir visualmente a la posición guardada
+  state.modo = null; state.moviendoMesaId = null; state.colocandoNombrePendiente=null;
+  hide('modeBanner');
+}
+async function confirmarModoMover(){
+  const grupo = state.meshesPorMesa[state.moviendoMesaId];
+  if(grupo){
+    await supa.from('mesas').update({pos_x: grupo.position.x, pos_z: grupo.position.z, actualizado_en:new Date().toISOString()}).eq('id', state.moviendoMesaId);
+    toast('Posición guardada');
+  }
+  state.modo = null; state.moviendoMesaId = null;
+  hide('modeBanner');
+}
+async function crearMesaEnPosicion(x,z){
+  const nombre = state.colocandoNombrePendiente;
+  state.modo = null; state.colocandoNombrePendiente=null; hide('modeBanner');
+  const { data, error } = await supa.from('mesas').insert({
+    restaurante_id: state.restaurante.id, nombre, pos_x:x, pos_z:z, estado:'libre'
+  }).select().single();
+  if(error){ toast('No se pudo crear la mesa','err'); console.error(error); return; }
+  state.mesas.push(data);
+  state.sillasPorMesa[data.id]=[]; state.clientesPorMesa[data.id]=[]; state.pedidosPorMesa[data.id]=[];
+  construirMeshMesa(data);
+  toast('Mesa creada');
+}
+
+/* =============================================================
+   MODAL DETALLE DE MESA
+   ============================================================= */
+function totalesCliente(mesaId, clienteId){
+  const items = (state.pedidosPorMesa[mesaId]||[]).filter(i=>i.cliente_id===clienteId);
+  return items.reduce((s,i)=> s + Number(i.precio_unitario)*i.cantidad, 0);
+}
+function totalMesa(mesaId){
+  return (state.pedidosPorMesa[mesaId]||[]).reduce((s,i)=> s + Number(i.precio_unitario)*i.cantidad, 0);
+}
+
+window.abrirMesa = function(mesaId){
+  state.mesaSeleccionadaId = mesaId;
+  const mesa = state.mesas.find(m=>m.id===mesaId);
+  if(!mesa) return;
+
+  if(mesa.estado === 'libre'){
+    const overlay = abrirModal(`
+      <div class="modal-head"><h3>${mesa.nombre}</h3><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button></div>
+      <span class="badge badge-libre"><span class="badge-dot"></span>Libre</span>
+      <label class="field">¿Cuántos clientes?</label>
+      <input class="input" id="numClientesInput" type="number" min="1" value="2">
+      <label class="field">¿Cuentas separadas?</label>
+      <div style="display:flex;gap:10px;margin-top:4px">
+        <button class="btn" id="cuentaJuntaBtn" style="flex:1">Una sola cuenta</button>
+        <button class="btn" id="cuentaSepBtn" style="flex:1">Cuentas separadas</button>
+      </div>
+      <div style="display:flex;gap:10px;margin-top:16px">
+        <button class="btn btn-ghost" style="flex:1" id="btnMoverMesaLibre">Mover mesa</button>
+        <button class="btn btn-brand" style="flex:2" id="btnIniciarServicio">Iniciar servicio</button>
+      </div>
+    `, {wide:true});
+    let sep = false;
+    document.getElementById('cuentaJuntaBtn').classList.add('btn-brand');
+    document.getElementById('cuentaJuntaBtn').addEventListener('click', function(){ sep=false; this.classList.add('btn-brand'); document.getElementById('cuentaSepBtn').classList.remove('btn-brand'); });
+    document.getElementById('cuentaSepBtn').addEventListener('click', function(){ sep=true; this.classList.add('btn-brand'); document.getElementById('cuentaJuntaBtn').classList.remove('btn-brand'); });
+    document.getElementById('btnMoverMesaLibre').addEventListener('click', ()=>{ cerrarModal(overlay); iniciarMoverMesa(mesaId); });
+    document.getElementById('btnIniciarServicio').addEventListener('click', async ()=>{
+      const n = parseInt(document.getElementById('numClientesInput').value)||1;
+      await iniciarServicio(mesaId, n, sep);
+      cerrarModal(overlay);
+    });
+  } else {
+    renderModalMesaOcupada(mesaId);
+  }
+}
+function iniciarMoverMesa(mesaId){
+  const propia = !state.esAdmin && state.mesas.find(m=>m.id===mesaId).mesero_id && state.mesas.find(m=>m.id===mesaId).mesero_id !== (state.mesero&&state.mesero.id);
+  const ejecutar = ()=>{
+    state.modo='moviendo'; state.moviendoMesaId = mesaId;
+    document.getElementById('modeBannerText').textContent='Arrastra la mesa a su nueva posición';
+    document.getElementById('modeBannerConfirm').classList.remove('hidden');
+    show('modeBanner');
+  };
+  pedirAutorizacionAdmin(ejecutar);
+}
+async function iniciarServicio(mesaId, numClientes, sep){
+  await supa.from('mesas').update({
+    estado:'ocupada', num_clientes:numClientes, cuentas_separadas: sep,
+    mesero_id: state.mesero ? state.mesero.id : null, actualizado_en: new Date().toISOString()
+  }).eq('id', mesaId);
+  const inserts = [];
+  for(let i=0;i<numClientes;i++){
+    inserts.push({mesa_id: mesaId, angulo: Math.round(i*360/numClientes)});
+  }
+  await supa.from('sillas').insert(inserts);
+  await recargarMesa(mesaId);
+  toast('Servicio iniciado');
+  renderModalMesaOcupada(mesaId);
+}
+
+function refrescarModalMesaSiAbierto(mesaId){
+  const overlay = document.querySelector('.modal-overlay[data-mesa-modal="'+mesaId+'"]');
+  if(overlay) renderModalMesaOcupada(mesaId, overlay);
+}
+
+function renderModalMesaOcupada(mesaId, overlayExistente){
+  const mesa = state.mesas.find(m=>m.id===mesaId);
+  const sillas = state.sillasPorMesa[mesaId]||[];
+  const clientes = state.clientesPorMesa[mesaId]||[];
+  const total = totalMesa(mesaId);
+  const html = `
+    <div class="modal-head"><h3>${mesa.nombre}</h3><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button></div>
+    <span class="badge badge-ocupada"><span class="badge-dot"></span>Ocupada · ${mesa.num_clientes} clientes · ${mesa.cuentas_separadas?'cuentas separadas':'cuenta única'}</span>
+
+    <h4 style="margin-top:16px;font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.03em">Sillas</h4>
+    <div class="sillas-grid" id="sillasGridModal"></div>
+    <button class="btn btn-sm" id="btnAgregarSilla" style="margin-top:10px">+ Agregar silla</button>
+
+    <div class="total-row"><span>Total mesa</span><span>${money(total)}</span></div>
+
+    <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap">
+      <button class="btn btn-brand" id="btnTomarPedido" style="flex:1">🍽️ Tomar pedido</button>
+      <button class="btn" id="btnVerCuenta" style="flex:1">🧾 Ver cuenta</button>
+      <button class="btn btn-ghost" id="btnMoverMesaOcupada">Mover mesa</button>
+      <button class="btn btn-danger" id="btnCerrarMesa">Cerrar mesa</button>
+    </div>
+  `;
+  let overlay = overlayExistente;
+  if(overlay){ overlay.querySelector('.modal').innerHTML = html; }
+  else { overlay = abrirModal(html, {wide:true}); overlay.setAttribute('data-mesa-modal', mesaId); }
+
+  const grid = overlay.querySelector('#sillasGridModal');
+  grid.innerHTML = sillas.map(s=>{
+    const c = clientes.find(cl=>cl.id===s.cliente_id);
+    return `<div class="silla-tile ${c?'ocupada':''}" onclick="abrirSilla('${mesaId}','${s.id}')">
+      <div class="ico">${c?'🙂':'🪑'}</div>
+      <div class="nom">${c ? c.nombre : 'Vacía'}</div>
+      ${c && c.nfc_codigo ? '<div class="nfc-chip">📶 pulsera</div>' : ''}
+    </div>`;
+  }).join('');
+
+  overlay.querySelector('#btnAgregarSilla').addEventListener('click', ()=> agregarSilla(mesaId));
+  overlay.querySelector('#btnTomarPedido').addEventListener('click', ()=> abrirTomarPedido(mesaId));
+  overlay.querySelector('#btnVerCuenta').addEventListener('click', ()=> abrirVerCuenta(mesaId));
+  overlay.querySelector('#btnMoverMesaOcupada').addEventListener('click', ()=>{ cerrarModal(overlay); iniciarMoverMesa(mesaId); });
+  overlay.querySelector('#btnCerrarMesa').addEventListener('click', ()=>{ cerrarModal(overlay); abrirCerrarMesa(mesaId); });
+}
+
+async function agregarSilla(mesaId){
+  const sillas = state.sillasPorMesa[mesaId]||[];
+  const n = sillas.length+1;
+  await supa.from('sillas').insert({mesa_id:mesaId, angulo: Math.round((n-1)*360/n)});
+  // reacomodar ángulos existentes para mantenerlas distribuidas
+  const nuevasSillas = [...sillas];
+  await recargarMesa(mesaId);
+  toast('Silla agregada');
+}
+
+/* =============================================================
+   ASIGNAR CLIENTE A SILLA + ESCANEO NFC
+   ============================================================= */
+let abortNFC = null;
+window.abrirSilla = function(mesaId, sillaId){
+  const sillas = state.sillasPorMesa[mesaId]||[];
+  const silla = sillas.find(s=>s.id===sillaId);
+  const clientes = state.clientesPorMesa[mesaId]||[];
+  const cliente = clientes.find(c=>c.id===silla.cliente_id);
+
+  if(cliente){
+    const overlay = abrirModal(`
+      <div class="modal-head"><h3>${cliente.nombre}</h3><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button></div>
+      <p class="modal-sub">${cliente.nfc_codigo ? '📶 Pulsera vinculada: '+cliente.nfc_codigo : 'Sin pulsera NFC asignada'}</p>
+      <div class="total-row" style="border-top:1px solid var(--line);padding-top:10px"><span>Consumo</span><span>${money(totalesCliente(mesaId, cliente.id))}</span></div>
+      <div style="display:flex;gap:8px;margin-top:16px">
+        <button class="btn btn-brand" style="flex:1" onclick="cerrarModalYAbrir(this,()=>abrirTomarPedido('${mesaId}','${cliente.id}'))">Tomar pedido</button>
+        <button class="btn btn-danger" id="btnQuitarCliente">Quitar cliente</button>
+      </div>
+    `);
+    overlay.querySelector('#btnQuitarCliente').addEventListener('click', ()=>{
+      pedirAutorizacionAdmin(async ()=>{
+        await supa.from('sillas').update({cliente_id:null}).eq('id', sillaId);
+        await supa.from('clientes').delete().eq('id', cliente.id);
+        await recargarMesa(mesaId);
+        cerrarModal(overlay);
+        toast('Cliente removido de la silla');
+      });
+    });
+    return;
+  }
+
+  const overlay = abrirModal(`
+    <div class="modal-head"><h3>Asignar cliente</h3><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button></div>
+    <label class="field">Nombre del cliente</label>
+    <input class="input" id="nombreClienteInput" placeholder="Ej: Juan">
+    <div class="nfc-scan-box" id="nfcBox">
+      <div class="nfc-pulse" id="nfcPulse"></div>
+      <div id="nfcTexto" style="font-size:13px;color:var(--muted)">Pulsera NFC (opcional)</div>
+      <button class="btn btn-sm" style="margin-top:10px" id="btnEscanearNfc">📶 Escanear pulsera</button>
+      <div style="margin-top:8px"><a href="#" style="font-size:12px;color:var(--muted)" id="linkManual">o escribir código manualmente</a></div>
+    </div>
+    <button class="btn btn-brand btn-block" style="margin-top:16px" id="btnGuardarCliente">Guardar</button>
+  `);
+  let nfcCodigo = null;
+  document.getElementById('btnEscanearNfc').addEventListener('click', ()=> iniciarEscaneoNFC((codigo)=>{
+    nfcCodigo = codigo;
+  }));
+  document.getElementById('linkManual').addEventListener('click', (e)=>{
+    e.preventDefault();
+    const box = document.getElementById('nfcBox');
+    box.innerHTML = `<label class="field" style="text-align:left">Código de pulsera</label><input class="input" id="nfcManualInput" placeholder="Código">`;
+    document.getElementById('nfcManualInput').addEventListener('input', (ev)=> nfcCodigo = ev.target.value);
+  });
+  document.getElementById('btnGuardarCliente').addEventListener('click', async ()=>{
+    const nombre = document.getElementById('nombreClienteInput').value.trim();
+    if(!nombre){ toast('Escribe el nombre del cliente','err'); return; }
+    const { data: nuevoCliente } = await supa.from('clientes').insert({mesa_id:mesaId, silla_id:sillaId, nombre, nfc_codigo:nfcCodigo}).select().single();
+    await supa.from('sillas').update({cliente_id:nuevoCliente.id}).eq('id', sillaId);
+    await recargarMesa(mesaId);
+    cerrarModal(overlay);
+    toast('Cliente asignado');
+  });
+}
+window.cerrarModalYAbrir = function(btn, fn){ btn.closest('.modal-overlay').remove(); fn(); }
+
+function iniciarEscaneoNFC(onCodigo){
+  const pulse = document.getElementById('nfcPulse');
+  const texto = document.getElementById('nfcTexto');
+  if(!('NDEFReader' in window)){
+    texto.textContent = 'Web NFC no disponible en este navegador. Usa Chrome en Android (HTTPS) o escribe el código manualmente.';
+    return;
+  }
+  pulse.classList.add('scanning');
+  texto.textContent = 'Acerca la pulsera al lector NFC…';
+  (async ()=>{
+    try{
+      const reader = new NDEFReader();
+      await reader.scan();
+      reader.onreading = (ev)=>{
+        const codigo = ev.serialNumber || ('NFC-'+Date.now());
+        pulse.classList.remove('scanning');
+        mostrarLecturaExitosa(codigo);
+        onCodigo(codigo);
+      };
+      reader.onreadingerror = ()=>{ texto.textContent = 'No se pudo leer. Intenta de nuevo.'; pulse.classList.remove('scanning'); };
+    } catch(err){
+      texto.textContent = 'Permiso NFC denegado o no disponible: ' + err.message;
+      pulse.classList.remove('scanning');
+    }
+  })();
+}
+function mostrarLecturaExitosa(codigo){
+  const box = document.getElementById('nfcBox');
+  if(!box) return;
+  box.innerHTML = `
+    <div class="check-anim pop"><svg viewBox="0 0 24 24"><path d="M4 12l5 5 11-11"/></svg></div>
+    <div style="margin-top:8px;font-weight:700;color:var(--libre)">Leído y guardado</div>
+    <div style="font-size:11.5px;color:var(--muted);margin-top:2px">${codigo}</div>
+  `;
+}
+
+/* =============================================================
+   TOMAR PEDIDO
+   ============================================================= */
+window.abrirTomarPedido = function(mesaId, clientePreseleccionado){
+  const clientes = state.clientesPorMesa[mesaId]||[];
+  if(clientes.length === 0){ toast('Primero asigna al menos un cliente a una silla','err'); return; }
+
+  let clienteActivo = clientePreseleccionado || null;
+  const overlay = abrirModal(`
+    <div class="modal-head"><h3>Tomar pedido</h3><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button></div>
+    <div id="pedidoCuentaSelector"></div>
+    <div id="pedidoScanZone"></div>
+    <div id="pedidoFormZone" class="hidden">
+      <label class="field">Producto</label>
+      <select class="input" id="prodSelect"></select>
+      <label class="field">Cantidad</label>
+      <input class="input" id="cantInput" type="number" min="1" value="1">
+      <div style="display:flex;justify-content:space-between;margin-top:10px;font-size:13.5px;color:var(--muted)">
+        <span>Precio unitario</span><span id="precioUnitLbl">$0</span>
+      </div>
+      <button class="btn btn-brand btn-block" style="margin-top:12px" id="btnAgregarItem">+ Agregar al pedido</button>
+    </div>
+    <h4 style="margin-top:18px;font-size:13px;color:var(--muted);text-transform:uppercase">Pedido actual</h4>
+    <div id="listaItemsCliente"></div>
+    <div style="display:flex;gap:8px;margin-top:14px">
+      <button class="btn" style="flex:1" id="btnVerInventarioPedido">📦 Ver inventario</button>
+      <button class="btn btn-brand" style="flex:1" onclick="this.closest('.modal-overlay').remove()">Finalizar</button>
+    </div>
+  `, {wide:true});
+
+  function pintarSelectorCuentas(){
+    const zone = overlay.querySelector('#pedidoCuentaSelector');
+    zone.innerHTML = clientes.map(c=>`<button class="cuenta-tab ${c.id===clienteActivo?'active':''}" data-c="${c.id}">${c.nombre}</button>`).join('');
+    zone.querySelectorAll('.cuenta-tab').forEach(b=> b.addEventListener('click', ()=>{ clienteActivo = b.getAttribute('data-c'); pintarTodo(); }));
+  }
+  function pintarZonaScan(){
+    const zone = overlay.querySelector('#pedidoScanZone');
+    const cliente = clientes.find(c=>c.id===clienteActivo);
+    if(!clienteActivo){
+      zone.innerHTML = `<div class="nfc-scan-box"><div class="nfc-pulse" id="nfcPulse"></div><div id="nfcTexto" style="font-size:13px;color:var(--muted)">Escanea la pulsera del cliente o elige su cuenta arriba</div><button class="btn btn-sm" style="margin-top:10px" id="btnEscanearPedido">📶 Escanear pulsera</button></div>`;
+      overlay.querySelector('#btnEscanearPedido').addEventListener('click', ()=>{
+        iniciarEscaneoNFC((codigo)=>{
+          const encontrado = clientes.find(c=>c.nfc_codigo === codigo);
+          if(encontrado){ clienteActivo = encontrado.id; toast('Cargando a '+encontrado.nombre); pintarTodo(); }
+          else toast('Esa pulsera no está registrada en esta mesa','err');
+        });
+      });
+      overlay.querySelector('#pedidoFormZone').classList.add('hidden');
+    } else {
+      zone.innerHTML = `<div class="check-anim pop" style="margin-top:10px"><svg viewBox="0 0 24 24"><path d="M4 12l5 5 11-11"/></svg></div><div style="text-align:center;margin-top:6px;font-weight:700;color:var(--libre)">Cargando a: ${cliente.nombre}</div>`;
+      overlay.querySelector('#pedidoFormZone').classList.remove('hidden');
+    }
+  }
+  function pintarSelectProductos(){
+    const sel = overlay.querySelector('#prodSelect');
+    if(!sel) return;
+    const porCategoria = {};
+    state.productos.forEach(p=>{ (porCategoria[p.categoria]=porCategoria[p.categoria]||[]).push(p); });
+    sel.innerHTML = Object.entries(porCategoria).map(([cat,ps])=>
+      `<optgroup label="${cat}">${ps.map(p=>`<option value="${p.id}" data-precio="${p.precio}">${p.nombre} — ${money(p.precio)}</option>`).join('')}</optgroup>`
+    ).join('');
+    actualizarPrecioLbl();
+    sel.addEventListener('change', actualizarPrecioLbl);
+  }
+  function actualizarPrecioLbl(){
+    const sel = overlay.querySelector('#prodSelect');
+    const lbl = overlay.querySelector('#precioUnitLbl');
+    if(!sel || !sel.selectedOptions[0]) return;
+    lbl.textContent = money(sel.selectedOptions[0].getAttribute('data-precio'));
+  }
+  function pintarListaItems(){
+    const zone = overlay.querySelector('#listaItemsCliente');
+    if(!clienteActivo){ zone.innerHTML = '<p style="color:var(--muted);font-size:13px">Selecciona un cliente para ver su pedido.</p>'; return; }
+    const items = (state.pedidosPorMesa[mesaId]||[]).filter(i=>i.cliente_id===clienteActivo);
+    zone.innerHTML = items.map(i=>`<div class="linea-item"><span>${i.producto_nombre} <span class="qty">x${i.cantidad}</span></span><span>${money(i.precio_unitario*i.cantidad)}</span></div>`).join('') || '<p style="color:var(--muted);font-size:13px">Sin productos aún.</p>';
+    zone.insertAdjacentHTML('beforeend', `<div class="total-row"><span>Total</span><span>${money(totalesCliente(mesaId, clienteActivo))}</span></div>`);
+  }
+  function pintarTodo(){ pintarSelectorCuentas(); pintarZonaScan(); pintarSelectProductos(); pintarListaItems(); }
+
+  overlay.querySelector('#btnVerInventarioPedido').addEventListener('click', abrirInventario);
+  pintarTodo();
+
+  overlay.addEventListener('click', async (e)=>{
+    if(e.target && e.target.id === 'btnAgregarItem'){
+      const sel = overlay.querySelector('#prodSelect');
+      const opt = sel.selectedOptions[0];
+      const cant = parseInt(overlay.querySelector('#cantInput').value)||1;
+      if(!opt) return;
+      await supa.from('pedidos_items').insert({
+        mesa_id:mesaId, cliente_id:clienteActivo, producto_id:opt.value,
+        producto_nombre: opt.textContent.split(' — ')[0], precio_unitario: opt.getAttribute('data-precio'),
+        cantidad: cant, mesero_id: state.mesero ? state.mesero.id : null
+      });
+      await recargarMesa(mesaId);
+      pintarListaItems();
+      const zone = overlay.querySelector('#pedidoScanZone');
+      const check = document.createElement('div');
+      check.className='check-anim pop'; check.style.marginTop='8px';
+      check.innerHTML = '<svg viewBox="0 0 24 24"><path d="M4 12l5 5 11-11"/></svg>';
+      zone.appendChild(check);
+      setTimeout(()=>check.remove(), 900);
+      toast('Producto agregado');
+    }
+  });
+}
+
+/* =============================================================
+   VER CUENTA / CERRAR MESA / IMPRESIÓN 58mm
+   ============================================================= */
+window.abrirVerCuenta = function(mesaId){
+  const mesa = state.mesas.find(m=>m.id===mesaId);
+  const clientes = state.clientesPorMesa[mesaId]||[];
+  let bloque = '';
+  if(mesa.cuentas_separadas){
+    bloque = clientes.map(c=>{
+      const items = (state.pedidosPorMesa[mesaId]||[]).filter(i=>i.cliente_id===c.id);
+      return `<h4 style="margin-top:14px">${c.nombre}</h4>` +
+        items.map(i=>`<div class="linea-item"><span>${i.producto_nombre} <span class="qty">x${i.cantidad}</span></span><span>${money(i.precio_unitario*i.cantidad)}</span></div>`).join('') +
+        `<div class="total-row"><span>Subtotal</span><span>${money(totalesCliente(mesaId,c.id))}</span></div>`;
+    }).join('');
+  } else {
+    const items = state.pedidosPorMesa[mesaId]||[];
+    bloque = items.map(i=>`<div class="linea-item"><span>${i.producto_nombre} <span class="qty">x${i.cantidad}</span></span><span>${money(i.precio_unitario*i.cantidad)}</span></div>`).join('');
+  }
+  abrirModal(`
+    <div class="modal-head"><h3>Cuenta — ${mesa.nombre}</h3><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button></div>
+    ${bloque || '<p style="color:var(--muted)">Sin productos registrados.</p>'}
+    <div class="total-row"><span>Total mesa</span><span>${money(totalMesa(mesaId))}</span></div>
+  `, {wide:true});
+}
+
+window.abrirCerrarMesa = function(mesaId){
+  const mesa = state.mesas.find(m=>m.id===mesaId);
+  const clientes = state.clientesPorMesa[mesaId]||[];
+  const cuentas = mesa.cuentas_separadas ? clientes : [{id:'__total__', nombre:'Cuenta única'}];
+  const overlay = abrirModal(`
+    <div class="modal-head"><h3>Cerrar mesa — ${mesa.nombre}</h3><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button></div>
+    <p class="modal-sub">Imprime cada cuenta y luego confirma la liquidación.</p>
+    <div id="cuentasParaCerrar"></div>
+    <button class="btn btn-danger btn-block" style="margin-top:16px" id="btnConfirmarLiquidar">Confirmar liquidación y liberar mesa</button>
+  `, {wide:true});
+  const zone = overlay.querySelector('#cuentasParaCerrar');
+  zone.innerHTML = cuentas.map(c=>{
+    const total = c.id==='__total__' ? totalMesa(mesaId) : totalesCliente(mesaId, c.id);
+    return `<div class="linea-item"><span>${c.nombre}</span><span style="display:flex;gap:10px;align-items:center">${money(total)} <button class="btn btn-sm" data-imprimir="${c.id}">🖨️ Imprimir</button></span></div>`;
+  }).join('');
+  zone.querySelectorAll('[data-imprimir]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const cid = btn.getAttribute('data-imprimir');
+      const cuenta = cid==='__total__' ? {id:'__total__', nombre:'Cuenta única'} : clientes.find(c=>c.id===cid);
+      imprimirTicket(mesa, cuenta, mesaId);
+    });
+  });
+  overlay.querySelector('#btnConfirmarLiquidar').addEventListener('click', ()=> liquidarMesa(mesaId, overlay));
+}
+
+function imprimirTicket(mesa, cuenta, mesaId){
+  const items = cuenta.id==='__total__' ? (state.pedidosPorMesa[mesaId]||[]) : (state.pedidosPorMesa[mesaId]||[]).filter(i=>i.cliente_id===cuenta.id);
+  const total = items.reduce((s,i)=> s+Number(i.precio_unitario)*i.cantidad, 0);
+  const fecha = new Date().toLocaleString('es-CO');
+  const div = document.getElementById('ticket-imprimir');
+  div.innerHTML = `
+    <div class="t-center"><h2>${state.restaurante.nombre}</h2></div>
+    <div class="t-center">${mesa.nombre} · ${cuenta.nombre}</div>
+    <div class="t-center">${fecha}</div>
+    <hr>
+    ${items.map(i=>`<div class="t-row"><span>${i.cantidad}x ${i.producto_nombre}</span><span>${money(i.precio_unitario*i.cantidad)}</span></div>`).join('')}
+    <hr>
+    <div class="t-row" style="font-weight:bold"><span>TOTAL</span><span>${money(total)}</span></div>
+    <div class="t-center" style="margin-top:6px">¡Gracias por su visita!</div>
+  `;
+  window.print();
+}
+
+async function liquidarMesa(mesaId, overlay){
+  const mesa = state.mesas.find(m=>m.id===mesaId);
+  const clientes = state.clientesPorMesa[mesaId]||[];
+  const items = state.pedidosPorMesa[mesaId]||[];
+  const total = totalMesa(mesaId);
+  const cuentasJson = mesa.cuentas_separadas
+    ? clientes.map(c=>({cliente:c.nombre, total:totalesCliente(mesaId,c.id), items: items.filter(i=>i.cliente_id===c.id)}))
+    : [{cliente:'Cuenta única', total, items}];
+
+  await supa.from('mesas_liquidadas').insert({
+    mesa_nombre: mesa.nombre, restaurante_id: state.restaurante.id, mesero_id: mesa.mesero_id, total, cuentas: cuentasJson
+  });
+  // limpiar mesa
+  await supa.from('pedidos_items').delete().eq('mesa_id', mesaId);
+  const sillaIds = (state.sillasPorMesa[mesaId]||[]).map(s=>s.id);
+  await supa.from('sillas').delete().eq('mesa_id', mesaId);
+  await supa.from('clientes').delete().eq('mesa_id', mesaId);
+  await supa.from('mesas').update({estado:'libre', num_clientes:0, cuentas_separadas:false, mesero_id:null}).eq('id', mesaId);
+
+  await recargarMesa(mesaId);
+  cerrarModal(overlay);
+  toast('Mesa liquidada y liberada');
+}
+
+/* =============================================================
+   INVENTARIO
+   ============================================================= */
+window.abrirInventario = function(){
+  const puedeEditar = state.esAdmin;
+  const overlay = abrirModal(`
+    <div class="modal-head"><h3>Inventario</h3><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button></div>
+    <table class="data-table"><thead><tr><th>Producto</th><th>Categoría</th><th>Precio</th>${puedeEditar?'<th></th>':''}</tr></thead>
+    <tbody id="invTbody"></tbody></table>
+    ${puedeEditar ? '<button class="btn btn-sm" style="margin-top:12px" id="btnNuevoProducto">+ Nuevo producto</button>' : ''}
+  `, {wide:true});
+  pintarInventario(overlay, puedeEditar);
+  if(puedeEditar) overlay.querySelector('#btnNuevoProducto').addEventListener('click', ()=> formularioProducto(null, overlay));
+}
+function pintarInventario(overlay, puedeEditar){
+  const tbody = overlay.querySelector('#invTbody');
+  tbody.innerHTML = state.productos.map(p=>`
+    <tr>
+      <td>${p.nombre}</td><td>${p.categoria}</td><td>${money(p.precio)}</td>
+      ${puedeEditar ? `<td><button class="btn btn-sm" data-editar="${p.id}">✏️</button></td>` : ''}
+    </tr>`).join('');
+  if(puedeEditar) tbody.querySelectorAll('[data-editar]').forEach(b=> b.addEventListener('click', ()=> formularioProducto(b.getAttribute('data-editar'), overlay)));
+}
+function formularioProducto(id, overlayPadre){
+  const p = id ? state.productos.find(x=>x.id===id) : null;
+  const overlay = abrirModal(`
+    <div class="modal-head"><h3>${p?'Editar':'Nuevo'} producto</h3><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button></div>
+    <label class="field">Nombre</label><input class="input" id="pfNombre" value="${p?p.nombre:''}">
+    <label class="field">Categoría</label><input class="input" id="pfCategoria" value="${p?p.categoria:'General'}">
+    <label class="field">Precio</label><input class="input" id="pfPrecio" type="number" value="${p?p.precio:0}">
+    <div style="display:flex;gap:8px;margin-top:16px">
+      <button class="btn btn-brand" style="flex:1" id="pfGuardar">Guardar</button>
+      ${p?'<button class="btn btn-danger" id="pfEliminar">Eliminar</button>':''}
+    </div>
+  `);
+  overlay.querySelector('#pfGuardar').addEventListener('click', async ()=>{
+    const payload = {
+      nombre: document.getElementById('pfNombre').value.trim(),
+      categoria: document.getElementById('pfCategoria').value.trim()||'General',
+      precio: Number(document.getElementById('pfPrecio').value)||0,
+      restaurante_id: state.restaurante.id
+    };
+    if(p) await supa.from('productos').update(payload).eq('id', p.id);
+    else await supa.from('productos').insert(payload);
+    await cargarProductos();
+    cerrarModal(overlay);
+    if(overlayPadre) pintarInventario(overlayPadre, true);
+    toast('Producto guardado');
+  });
+  if(p) overlay.querySelector('#pfEliminar').addEventListener('click', async ()=>{
+    await supa.from('productos').update({activo:false}).eq('id', p.id);
+    await cargarProductos();
+    cerrarModal(overlay);
+    if(overlayPadre) pintarInventario(overlayPadre, true);
+    toast('Producto eliminado');
+  });
+}
+document.getElementById('btnInventarioTop').addEventListener('click', abrirInventario);
+
+/* =============================================================
+   DASHBOARD MESERO — "Mis mesas"
+   ============================================================= */
+document.getElementById('btnMisMesas').addEventListener('click', async ()=>{
+  document.getElementById('meseroDashWho').textContent = state.mesero.nombre;
+  await pintarDashboardMesero('activas');
+  showOnly('screen-mesero-dash');
+});
+document.querySelectorAll('[data-mtab]').forEach(b=> b.addEventListener('click', function(){
+  document.querySelectorAll('[data-mtab]').forEach(x=>x.classList.remove('active'));
+  this.classList.add('active');
+  pintarDashboardMesero(this.getAttribute('data-mtab'));
+}));
+async function pintarDashboardMesero(tab){
+  const activas = state.mesas.filter(m=> m.estado==='ocupada' && m.mesero_id===state.mesero.id);
+  const { data: liquidadasTodas } = await supa.from('mesas_liquidadas').select('*').eq('mesero_id', state.mesero.id).order('liquidada_en', {ascending:false});
+  const hoyStr = new Date().toDateString();
+  const liquidadasHoy = (liquidadasTodas||[]).filter(l=> new Date(l.liquidada_en).toDateString() === hoyStr);
+  document.getElementById('kpiAtendidas').textContent = activas.length;
+  document.getElementById('kpiLiquidadasHoy').textContent = liquidadasHoy.length;
+  document.getElementById('kpiTotalHoy').textContent = money(liquidadasHoy.reduce((s,l)=>s+Number(l.total),0));
+
+  const content = document.getElementById('meseroDashContent');
+  if(tab==='activas'){
+    content.innerHTML = activas.length ? `<table class="data-table"><thead><tr><th>Mesa</th><th>Clientes</th><th>Total actual</th></tr></thead><tbody>
+      ${activas.map(m=>`<tr><td>${m.nombre}</td><td>${m.num_clientes}</td><td>${money(totalMesa(m.id))}</td></tr>`).join('')}
+    </tbody></table>` : '<p style="color:var(--muted)">No tienes mesas activas.</p>';
+  } else {
+    content.innerHTML = (liquidadasTodas&&liquidadasTodas.length) ? `<table class="data-table"><thead><tr><th>Mesa</th><th>Fecha</th><th>Total</th></tr></thead><tbody>
+      ${liquidadasTodas.map(l=>`<tr><td>${l.mesa_nombre}</td><td>${new Date(l.liquidada_en).toLocaleString('es-CO')}</td><td>${money(l.total)}</td></tr>`).join('')}
+    </tbody></table>` : '<p style="color:var(--muted)">Aún no has liquidado mesas.</p>';
+  }
+}
+
+/* =============================================================
+   DASHBOARD ADMIN
+   ============================================================= */
+document.querySelectorAll('.tabs-row [data-tab]').forEach(b=> b.addEventListener('click', function(){
+  document.querySelectorAll('.tabs-row [data-tab]').forEach(x=>x.classList.remove('active'));
+  this.classList.add('active');
+  renderTab(this.getAttribute('data-tab'));
+}));
+
+async function renderTab(tab){
+  const el = document.getElementById('tabContent');
+  if(tab==='reportes'){
+    const { data: liq } = await supa.from('mesas_liquidadas').select('*').eq('restaurante_id', state.restaurante.id).order('liquidada_en',{ascending:false});
+    const totalGeneral = (liq||[]).reduce((s,l)=>s+Number(l.total),0);
+    const porMesero = {};
+    (liq||[]).forEach(l=>{ const key=l.mesero_id||'—'; porMesero[key]=(porMesero[key]||0)+Number(l.total); });
+    const meseros = await supa.from('meseros').select('*').eq('restaurante_id', state.restaurante.id);
+    const nombreMesero = id => (meseros.data||[]).find(m=>m.id===id)?.nombre || 'Sin mesero';
+    el.innerHTML = `
+      <div class="kpi-row">
+        <div class="card kpi"><div class="num">${money(totalGeneral)}</div><div class="lbl">Total histórico</div></div>
+        <div class="card kpi"><div class="num">${(liq||[]).length}</div><div class="lbl">Mesas liquidadas</div></div>
+      </div>
+      <h4 style="margin-bottom:8px">Ventas por mesero</h4>
+      <table class="data-table"><thead><tr><th>Mesero</th><th>Total</th></tr></thead><tbody>
+        ${Object.entries(porMesero).map(([id,tot])=>`<tr><td>${nombreMesero(id)}</td><td>${money(tot)}</td></tr>`).join('') || '<tr><td colspan="2">Sin datos aún</td></tr>'}
+      </tbody></table>
+      <h4 style="margin:18px 0 8px">Últimas mesas liquidadas</h4>
+      <table class="data-table"><thead><tr><th>Mesa</th><th>Mesero</th><th>Fecha</th><th>Total</th></tr></thead><tbody>
+        ${(liq||[]).slice(0,20).map(l=>`<tr><td>${l.mesa_nombre}</td><td>${nombreMesero(l.mesero_id)}</td><td>${new Date(l.liquidada_en).toLocaleString('es-CO')}</td><td>${money(l.total)}</td></tr>`).join('') || '<tr><td colspan="4">Sin datos aún</td></tr>'}
+      </tbody></table>
+    `;
+  }
+  if(tab==='inventario'){
+    await cargarProductos();
+    el.innerHTML = `<div class="row-between"><h4>Productos</h4><button class="btn btn-sm btn-brand" id="btnNuevoProdAdmin">+ Nuevo producto</button></div>
+      <table class="data-table"><thead><tr><th>Producto</th><th>Categoría</th><th>Precio</th><th></th></tr></thead><tbody id="invAdminTbody"></tbody></table>`;
+    pintarInvAdmin();
+    document.getElementById('btnNuevoProdAdmin').addEventListener('click', ()=> formularioProducto(null, {querySelector:()=>null}));
+  }
+  if(tab==='meseros'){
+    const { data: ms } = await supa.from('meseros').select('*').eq('restaurante_id', state.restaurante.id).order('nombre');
+    el.innerHTML = `<div class="row-between"><h4>Meseros</h4><button class="btn btn-sm btn-brand" id="btnNuevoMesero">+ Nuevo mesero</button></div>
+      <table class="data-table"><thead><tr><th>Nombre</th><th>PIN</th><th>Activo</th><th></th></tr></thead><tbody>
+      ${(ms||[]).map(m=>`<tr><td>${m.nombre}</td><td>${m.pin}</td><td>${m.activo?'Sí':'No'}</td><td><button class="btn btn-sm" data-editar-mesero="${m.id}">✏️</button></td></tr>`).join('')}
+      </tbody></table>`;
+    document.getElementById('btnNuevoMesero').addEventListener('click', ()=> formularioMesero(null));
+    el.querySelectorAll('[data-editar-mesero]').forEach(b=> b.addEventListener('click', ()=> formularioMesero(b.getAttribute('data-editar-mesero'), ms)));
+  }
+  if(tab==='restaurantes'){
+    el.innerHTML = `<div class="row-between"><h4>Restaurantes / subdominios</h4><button class="btn btn-sm btn-brand" id="btnNuevoRest">+ Nuevo restaurante</button></div>
+      <table class="data-table"><thead><tr><th>Nombre</th><th>Subdominio</th><th></th></tr></thead><tbody>
+      ${state.restaurantes.map(r=>`<tr><td>${r.nombre}</td><td>${r.subdominio}.tudominio.com</td><td><button class="btn btn-sm" data-editar-rest="${r.id}">✏️</button></td></tr>`).join('')}
+      </tbody></table>`;
+    document.getElementById('btnNuevoRest').addEventListener('click', ()=> formularioRestaurante(null));
+    el.querySelectorAll('[data-editar-rest]').forEach(b=> b.addEventListener('click', ()=> formularioRestaurante(b.getAttribute('data-editar-rest'))));
+  }
+  if(tab==='config'){
+    el.innerHTML = `<h4>Cambiar contraseña de administrador</h4>
+      <label class="field">Contraseña actual</label><input class="input" id="cfgActual" type="password">
+      <label class="field">Nueva contraseña</label><input class="input" id="cfgNueva" type="password">
+      <button class="btn btn-brand" style="margin-top:14px" id="btnCambiarPass">Guardar nueva contraseña</button>`;
+    document.getElementById('btnCambiarPass').addEventListener('click', async ()=>{
+      if(document.getElementById('cfgActual').value !== state.adminPassword){ toast('Contraseña actual incorrecta','err'); return; }
+      const nueva = document.getElementById('cfgNueva').value.trim();
+      if(!nueva){ toast('Escribe la nueva contraseña','err'); return; }
+      await supa.from('config_admin').update({password:nueva}).eq('id',1);
+      state.adminPassword = nueva;
+      toast('Contraseña actualizada');
+    });
+  }
+}
+function pintarInvAdmin(){
+  const tbody = document.getElementById('invAdminTbody');
+  if(!tbody) return;
+  tbody.innerHTML = state.productos.map(p=>`<tr><td>${p.nombre}</td><td>${p.categoria}</td><td>${money(p.precio)}</td><td><button class="btn btn-sm" data-ed="${p.id}">✏️</button></td></tr>`).join('');
+  tbody.querySelectorAll('[data-ed]').forEach(b=> b.addEventListener('click', ()=> formularioProducto(b.getAttribute('data-ed'), {querySelector:()=>null})));
+}
+function formularioMesero(id, listaActual){
+  const m = id ? (listaActual||[]).find(x=>x.id===id) : null;
+  const overlay = abrirModal(`
+    <div class="modal-head"><h3>${m?'Editar':'Nuevo'} mesero</h3><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button></div>
+    <label class="field">Nombre</label><input class="input" id="mfNombre" value="${m?m.nombre:''}">
+    <label class="field">PIN</label><input class="input" id="mfPin" value="${m?m.pin:'1234'}">
+    <label class="field">Activo</label><select class="input" id="mfActivo"><option value="true" ${m&&m.activo?'selected':''}>Sí</option><option value="false" ${m&&!m.activo?'selected':''}>No</option></select>
+    <button class="btn btn-brand btn-block" style="margin-top:16px" id="mfGuardar">Guardar</button>
+  `);
+  document.getElementById('mfGuardar').addEventListener('click', async ()=>{
+    const payload = { nombre: document.getElementById('mfNombre').value.trim(), pin: document.getElementById('mfPin').value.trim(), activo: document.getElementById('mfActivo').value==='true', restaurante_id: state.restaurante.id };
+    if(m) await supa.from('meseros').update(payload).eq('id', m.id);
+    else await supa.from('meseros').insert(payload);
+    cerrarModal(overlay);
+    renderTab('meseros');
+    toast('Mesero guardado');
+  });
+}
+function formularioRestaurante(id){
+  const r = id ? state.restaurantes.find(x=>x.id===id) : null;
+  const overlay = abrirModal(`
+    <div class="modal-head"><h3>${r?'Editar':'Nuevo'} restaurante</h3><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button></div>
+    <label class="field">Nombre</label><input class="input" id="rfNombre" value="${r?r.nombre:''}">
+    <label class="field">Subdominio</label><input class="input" id="rfSub" value="${r?r.subdominio:''}" placeholder="ej: pizzeria">
+    <button class="btn btn-brand btn-block" style="margin-top:16px" id="rfGuardar">Guardar</button>
+  `);
+  document.getElementById('rfGuardar').addEventListener('click', async ()=>{
+    const payload = { nombre: document.getElementById('rfNombre').value.trim(), subdominio: document.getElementById('rfSub').value.trim().toLowerCase() };
+    if(r) await supa.from('restaurantes').update(payload).eq('id', r.id);
+    else await supa.from('restaurantes').insert(payload);
+    const { data: rests } = await supa.from('restaurantes').select('*').order('nombre');
+    state.restaurantes = rests || [];
+    cerrarModal(overlay);
+    renderTab('restaurantes');
+    toast('Restaurante guardado');
+  });
+}
+
+/* =============================================================
+   ARRANCAR
+   ============================================================= */
+iniciar();
+</script>
+</body>
+</html>
