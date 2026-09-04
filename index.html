@@ -9,6 +9,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
 /* ============================================================
    TOKENS
@@ -128,7 +129,8 @@ input.input:focus, select.input:focus{outline:none;border-color:var(--brand);}
 .map-legend span{display:flex; align-items:center; gap:6px;}
 .dot{width:9px;height:9px;border-radius:50%;}
 
-.fab{position:absolute; right:16px; bottom:16px; z-index:6;}
+.fab-stack{position:absolute; right:16px; bottom:16px; z-index:8; display:flex; flex-direction:column; gap:10px; align-items:flex-end;}
+.fab-stack .btn{white-space:nowrap; box-shadow:0 8px 22px rgba(0,0,0,.45);}
 .scan-pulsera-btn{white-space:nowrap;}
 .mode-banner{
   position:absolute; top:14px; left:50%; transform:translateX(-50%); z-index:6;
@@ -198,6 +200,34 @@ table.data-table tr:last-child td{border-bottom:none;}
 .row-between{display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; gap:10px; flex-wrap:wrap;}
 .form-grid{display:grid; grid-template-columns:1fr 1fr; gap:0 14px;}
 
+/* Carga masiva por Excel */
+.excel-upload-box{border:1px dashed var(--line); border-radius:var(--radius); padding:14px 16px; display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:16px; background:var(--panel-2);}
+.excel-upload-box .txt{font-size:13px; color:var(--muted);}
+.excel-preview-table{max-height:340px; overflow-y:auto; border:1px solid var(--line); border-radius:8px; margin:10px 0;}
+.prod-thumb{width:34px;height:34px;border-radius:6px;object-fit:cover;background:var(--panel-2);border:1px solid var(--line);display:block;}
+.prod-thumb-empty{width:34px;height:34px;border-radius:6px;background:var(--panel-2);border:1px dashed var(--line);display:flex;align-items:center;justify-content:center;font-size:14px;color:var(--muted);}
+
+/* Tickets: buscador + acordeón agrupado */
+.ticket-search-row{display:flex; gap:8px; margin-bottom:16px;}
+.ticket-search-row input{flex:1;}
+.ticket-group{margin-bottom:14px; border:1px solid var(--line); border-radius:var(--radius); overflow:hidden;}
+.ticket-group-head{display:flex; justify-content:space-between; align-items:center; padding:12px 16px; background:var(--panel-2); cursor:pointer;}
+.ticket-group-head:hover{background:var(--panel);}
+.ticket-group-head .tgh-title{font-weight:600; font-size:14px;}
+.ticket-group-head .tgh-meta{color:var(--muted); font-size:12px;}
+.ticket-group-body{padding:0 16px;}
+.ticket-group-body.hidden{display:none;}
+.ticket-num{font-family:var(--font-head); color:var(--brand);}
+
+/* Impresoras */
+.printer-card{display:flex; justify-content:space-between; align-items:center; padding:12px 14px; border:1px solid var(--line); border-radius:var(--radius); margin-bottom:10px; background:var(--panel-2);}
+.printer-card .pc-info{display:flex; flex-direction:column; gap:2px;}
+.printer-card .pc-info .pc-name{font-weight:600; font-size:14px;}
+.printer-card .pc-info .pc-meta{color:var(--muted); font-size:12px;}
+.printer-card .pc-actions{display:flex; gap:6px;}
+.printer-section-title{margin:22px 0 10px; display:flex; align-items:center; gap:8px;}
+.printer-hint{background:var(--panel-2); border:1px solid var(--line); border-radius:var(--radius); padding:12px 14px; font-size:12.5px; color:var(--muted); margin-bottom:14px; line-height:1.5;}
+
 /* ============================================================
    TICKET IMPRESIÓN 58mm
    ============================================================ */
@@ -242,12 +272,8 @@ table.data-table tr:last-child td{border-bottom:none;}
   .dash-body{padding:14px 12px;}
   .kpi-row{grid-template-columns:1fr 1fr;}
   .tabs-row{justify-content:flex-start;}
-  .fab{left:50%; right:auto; transform:translateX(-50%); bottom:18px; width:calc(100% - 32px); max-width:320px;}
-  .fab .btn{width:100%;}
-  #screen-mapa .scan-pulsera-btn{
-    position:absolute; left:12px; top:50%; transform:translateY(-50%); z-index:20;
-    box-shadow:0 8px 22px rgba(0,0,0,.5);
-  }
+  .fab-stack{left:12px; right:12px; bottom:16px; align-items:stretch;}
+  .fab-stack .btn{width:100%;}
   .actions-bar .btn{flex:1 1 100%; max-width:none;}
   .sillas-grid{grid-template-columns:repeat(auto-fill, minmax(78px,1fr));}
   .login-card{padding:26px 20px;}
@@ -302,7 +328,6 @@ table.data-table tr:last-child td{border-bottom:none;}
       <div class="who" id="topWho">—</div>
     </div>
     <div class="topbar-actions">
-      <button class="btn btn-sm scan-pulsera-btn" id="btnEscanearPulseraMapa">📶 Escanear pulsera</button>
       <button class="btn btn-sm" id="btnInventarioTop">📦 Inventario</button>
       <button class="btn btn-sm" id="btnMisMesas">📋 Mis mesas</button>
       <button class="btn btn-sm btn-ghost" id="btnSalirMapa">Salir</button>
@@ -319,7 +344,10 @@ table.data-table tr:last-child td{border-bottom:none;}
       <button class="btn btn-sm" style="background:#1a1305" id="modeBannerConfirm">Confirmar</button>
       <button class="btn btn-sm btn-ghost" id="modeBannerCancel">Cancelar</button>
     </div>
-    <button class="btn btn-brand fab" id="btnNuevaMesa">+ Nueva mesa</button>
+    <div class="fab-stack">
+      <button class="btn scan-pulsera-btn" id="btnEscanearPulseraMapa">📶 Escanear pulsera</button>
+      <button class="btn btn-brand" id="btnNuevaMesa">+ Nueva mesa</button>
+    </div>
   </div>
 </div>
 
@@ -341,6 +369,8 @@ table.data-table tr:last-child td{border-bottom:none;}
         <button class="tab-btn active" data-tab="reportes">Reportes</button>
         <button class="tab-btn" data-tab="cruce">Cruce entregas</button>
         <button class="tab-btn" data-tab="inventario">Inventario</button>
+        <button class="tab-btn" data-tab="tickets">Tickets</button>
+        <button class="tab-btn" data-tab="impresoras">Impresoras</button>
         <button class="tab-btn" data-tab="meseros">Meseros</button>
         <button class="tab-btn" data-tab="impuestos">Impuestos</button>
         <button class="tab-btn" data-tab="config">Configuración</button>
@@ -1596,21 +1626,43 @@ window.abrirCerrarMesa = function(mesaId){
   overlay.querySelector('#btnConfirmarLiquidar').addEventListener('click', ()=> liquidarMesa(mesaId, overlay, ()=>propinaPct));
 }
 
-function imprimirTicket(mesa, cuenta, mesaId, totales){
+async function imprimirTicket(mesa, cuenta, mesaId, totales){
   const items = cuenta.id==='__total__' ? (state.pedidosPorMesa[mesaId]||[]) : (state.pedidosPorMesa[mesaId]||[]).filter(i=>i.cliente_id===cuenta.id);
   const subtotal = items.reduce((s,i)=> s+Number(i.precio_unitario)*i.cantidad, 0);
   const t = totales || calcularTotales(subtotal);
-  const fecha = new Date().toLocaleString('es-CO');
+
+  let numeroTicket = null;
+  try{
+    const { data, error } = await supa.from('tickets').insert({
+      restaurante_id: state.restaurante.id,
+      mesero_id: mesa.mesero_id || (state.mesero?state.mesero.id:null),
+      mesero_nombre: (state.mesero && state.mesero.id===mesa.mesero_id) ? state.mesero.nombre : nombreMeseroCruce(mesa.mesero_id),
+      mesa_nombre: mesa.nombre,
+      cliente_nombre: cuenta.nombre,
+      items: items,
+      subtotal: t.subtotal, impuestos: t.totalImpuestos, propina: t.propina, total: t.total
+    }).select('numero').single();
+    if(!error && data) numeroTicket = data.numero;
+  }catch(err){ console.error('No se pudo guardar el ticket en el historial', err); }
+
+  imprimirTicketHTML({
+    restauranteNombre: state.restaurante.nombre, mesaNombre: mesa.nombre, clienteNombre: cuenta.nombre,
+    fecha: new Date().toLocaleString('es-CO'), items, totales: t, numero: numeroTicket
+  });
+}
+function imprimirTicketHTML({restauranteNombre, mesaNombre, clienteNombre, fecha, items, totales:t, numero, reimpresion}){
   const div = document.getElementById('ticket-imprimir');
   div.innerHTML = `
-    <div class="t-center"><h2>${state.restaurante.nombre}</h2></div>
-    <div class="t-center">${mesa.nombre} · ${cuenta.nombre}</div>
+    <div class="t-center"><h2>${restauranteNombre}</h2></div>
+    <div class="t-center">${mesaNombre} · ${clienteNombre}</div>
     <div class="t-center">${fecha}</div>
+    ${numero!=null ? `<div class="t-center">Ticket N.º ${numero}</div>` : ''}
+    ${reimpresion ? '<div class="t-center">*** REIMPRESIÓN ***</div>' : ''}
     <hr>
     ${items.map(i=>`<div class="t-row"><span>${i.cantidad}x ${i.producto_nombre}</span><span>${money(i.precio_unitario*i.cantidad)}</span></div>`).join('')}
     <hr>
     <div class="t-row"><span>Subtotal</span><span>${money(t.subtotal)}</span></div>
-    ${t.lineasImpuestos.map(l=>`<div class="t-row"><span>${l.nombre} (${l.porcentaje}%)</span><span>${money(l.valor)}</span></div>`).join('')}
+    ${(t.lineasImpuestos||[]).map(l=>`<div class="t-row"><span>${l.nombre} (${l.porcentaje}%)</span><span>${money(l.valor)}</span></div>`).join('')}
     ${t.propinaPct>0 ? `<div class="t-row"><span>Propina (${t.propinaPct}%)</span><span>${money(t.propina)}</span></div>` : ''}
     <hr>
     <div class="t-row" style="font-weight:bold"><span>TOTAL A PAGAR</span><span>${money(t.total)}</span></div>
@@ -1722,7 +1774,7 @@ window.abrirInventario = function(){
   const puedeEditar = state.esAdmin;
   const overlay = abrirModal(`
     <div class="modal-head"><h3>Inventario</h3><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button></div>
-    <table class="data-table"><thead><tr><th>Producto</th><th>Categoría</th><th>Precio</th>${puedeEditar?'<th></th>':''}</tr></thead>
+    <table class="data-table"><thead><tr><th></th><th>Producto</th><th>Categoría</th><th>Precio</th><th>Stock</th>${puedeEditar?'<th></th>':''}</tr></thead>
     <tbody id="invTbody"></tbody></table>
     ${puedeEditar ? '<button class="btn btn-sm" style="margin-top:12px" id="btnNuevoProducto">+ Nuevo producto</button>' : ''}
   `, {wide:true});
@@ -1733,7 +1785,8 @@ function pintarInventario(overlay, puedeEditar){
   const tbody = overlay.querySelector('#invTbody');
   tbody.innerHTML = state.productos.map(p=>`
     <tr>
-      <td>${p.nombre}</td><td>${p.categoria}</td><td>${money(p.precio)}</td>
+      <td>${p.imagen?`<img src="${p.imagen}" class="prod-thumb">`:'<div class="prod-thumb-empty">📦</div>'}</td>
+      <td>${p.nombre}</td><td>${p.categoria}</td><td>${money(p.precio)}</td><td>${p.cantidad!=null?p.cantidad:'—'}</td>
       ${puedeEditar ? `<td><button class="btn btn-sm" data-editar="${p.id}">✏️</button></td>` : ''}
     </tr>`).join('');
   if(puedeEditar) tbody.querySelectorAll('[data-editar]').forEach(b=> b.addEventListener('click', ()=> formularioProducto(b.getAttribute('data-editar'), overlay)));
@@ -1742,26 +1795,53 @@ function formularioProducto(id, overlayPadre){
   const p = id ? state.productos.find(x=>x.id===id) : null;
   const overlay = abrirModal(`
     <div class="modal-head"><h3>${p?'Editar':'Nuevo'} producto</h3><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button></div>
+    <div style="display:flex;gap:14px;align-items:center;margin-bottom:6px">
+      <div id="pfImgPreviewWrap">${p&&p.imagen?`<img src="${p.imagen}" class="prod-thumb" style="width:56px;height:56px" id="pfImgPreview">`:`<div class="prod-thumb-empty" style="width:56px;height:56px;font-size:20px" id="pfImgPreview">📦</div>`}</div>
+      <div>
+        <input type="file" accept="image/*" id="pfImagenFile" class="hidden">
+        <button type="button" class="btn btn-sm" id="pfSubirImagen">📷 ${p&&p.imagen?'Cambiar imagen':'Subir imagen'}</button>
+        <div class="modal-sub" style="margin-top:4px">Se guarda solo en este producto.</div>
+      </div>
+    </div>
     <label class="field">Nombre</label><input class="input" id="pfNombre" value="${p?p.nombre:''}">
     <label class="field">Categoría</label><input class="input" id="pfCategoria" value="${p?p.categoria:'General'}">
-    <label class="field">Precio</label><input class="input" id="pfPrecio" type="number" value="${p?p.precio:0}">
+    <div class="form-grid">
+      <div><label class="field">Precio</label><input class="input" id="pfPrecio" type="number" value="${p?p.precio:0}"></div>
+      <div><label class="field">Cantidad en inventario</label><input class="input" id="pfCantidad" type="number" value="${p&&p.cantidad!=null?p.cantidad:0}"></div>
+    </div>
     <div style="display:flex;gap:8px;margin-top:16px">
       <button class="btn btn-brand" style="flex:1" id="pfGuardar">Guardar</button>
       ${p?'<button class="btn btn-danger" id="pfEliminar">Eliminar</button>':''}
     </div>
   `);
+  let imagenPendiente = (p && p.imagen) || null;
+  overlay.querySelector('#pfSubirImagen').addEventListener('click', ()=> overlay.querySelector('#pfImagenFile').click());
+  overlay.querySelector('#pfImagenFile').addEventListener('change', async (e)=>{
+    const file = e.target.files[0];
+    if(!file) return;
+    try{
+      const dataUrl = await leerImagenComoDataURL(file);
+      imagenPendiente = dataUrl;
+      const wrap = overlay.querySelector('#pfImgPreviewWrap');
+      wrap.innerHTML = `<img src="${dataUrl}" class="prod-thumb" style="width:56px;height:56px" id="pfImgPreview">`;
+    }catch(err){ toast('No se pudo leer la imagen','err'); }
+  });
   overlay.querySelector('#pfGuardar').addEventListener('click', async ()=>{
     const payload = {
       nombre: document.getElementById('pfNombre').value.trim(),
       categoria: document.getElementById('pfCategoria').value.trim()||'General',
       precio: Number(document.getElementById('pfPrecio').value)||0,
+      cantidad: Number(document.getElementById('pfCantidad').value)||0,
+      imagen: imagenPendiente,
       restaurante_id: state.restaurante.id
     };
+    if(!payload.nombre){ toast('Escribe el nombre del producto','err'); return; }
     if(p) await supa.from('productos').update(payload).eq('id', p.id);
     else await supa.from('productos').insert(payload);
     await cargarProductos();
     cerrarModal(overlay);
     if(overlayPadre) pintarInventario(overlayPadre, true);
+    if(document.getElementById('invAdminTbody')) pintarInvAdmin();
     toast('Producto guardado');
   });
   if(p) overlay.querySelector('#pfEliminar').addEventListener('click', async ()=>{
@@ -1769,7 +1849,16 @@ function formularioProducto(id, overlayPadre){
     await cargarProductos();
     cerrarModal(overlay);
     if(overlayPadre) pintarInventario(overlayPadre, true);
+    if(document.getElementById('invAdminTbody')) pintarInvAdmin();
     toast('Producto eliminado');
+  });
+}
+function leerImagenComoDataURL(file){
+  return new Promise((resolve, reject)=>{
+    const reader = new FileReader();
+    reader.onload = ()=> resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
   });
 }
 document.getElementById('btnInventarioTop').addEventListener('click', abrirInventario);
@@ -1866,9 +1955,58 @@ async function renderTab(tab){
   if(tab==='inventario'){
     await cargarProductos();
     el.innerHTML = `<div class="row-between"><h4>Productos</h4><button class="btn btn-sm btn-brand" id="btnNuevoProdAdmin">+ Nuevo producto</button></div>
-      <table class="data-table"><thead><tr><th>Producto</th><th>Categoría</th><th>Precio</th><th></th></tr></thead><tbody id="invAdminTbody"></tbody></table>`;
+      <div class="excel-upload-box">
+        <div class="txt">📥 Carga masiva desde Excel — columnas: <b>producto, cantidad, precio, imagen</b> (la imagen se carga aparte, individualmente, en cada producto).</div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-sm" id="btnPlantillaExcel">Descargar plantilla</button>
+          <button class="btn btn-sm btn-brand" id="btnCargarExcel">Cargar Excel</button>
+          <input type="file" id="inputExcelProductos" accept=".xlsx,.xls,.csv" class="hidden">
+        </div>
+      </div>
+      <table class="data-table"><thead><tr><th></th><th>Producto</th><th>Categoría</th><th>Precio</th><th>Stock</th><th></th></tr></thead><tbody id="invAdminTbody"></tbody></table>`;
     pintarInvAdmin();
     document.getElementById('btnNuevoProdAdmin').addEventListener('click', ()=> formularioProducto(null, {querySelector:()=>null}));
+    document.getElementById('btnPlantillaExcel').addEventListener('click', descargarPlantillaExcel);
+    document.getElementById('btnCargarExcel').addEventListener('click', ()=> document.getElementById('inputExcelProductos').click());
+    document.getElementById('inputExcelProductos').addEventListener('change', (e)=>{
+      const file = e.target.files[0];
+      if(file) manejarArchivoExcelProductos(file);
+      e.target.value = '';
+    });
+  }
+  if(tab==='tickets'){
+    el.innerHTML = `
+      <div class="row-between"><h4>Historial de tickets</h4></div>
+      <div class="ticket-search-row">
+        <input class="input" id="ticketBuscarNumero" placeholder="Buscar por número de ticket…" inputmode="numeric">
+        <button class="btn btn-sm" id="btnTicketBuscar">Buscar</button>
+        <button class="btn btn-sm btn-ghost" id="btnTicketLimpiar">Limpiar</button>
+      </div>
+      <div id="ticketsContent"><p style="color:var(--muted)">Cargando…</p></div>
+    `;
+    await cargarYPintarTickets();
+    document.getElementById('btnTicketBuscar').addEventListener('click', ()=> pintarTicketsAgrupados(document.getElementById('ticketBuscarNumero').value.trim()));
+    document.getElementById('ticketBuscarNumero').addEventListener('keydown', (e)=>{ if(e.key==='Enter') pintarTicketsAgrupados(e.target.value.trim()); });
+    document.getElementById('btnTicketLimpiar').addEventListener('click', ()=>{ document.getElementById('ticketBuscarNumero').value=''; pintarTicketsAgrupados(''); });
+  }
+  if(tab==='impresoras'){
+    el.innerHTML = `
+      <div class="printer-hint">Los navegadores no pueden rastrear automáticamente toda la red WiFi por seguridad. Para impresoras de red: revisa la IP de la impresora (usualmente en su recibo de auto-prueba o en el panel del router) y agrégala manualmente abajo. Para impresoras Bluetooth, usa "Buscar impresora Bluetooth": el navegador mostrará las que estén encendidas y cerca para vincularlas (funciona en Chrome/Edge; no está disponible en Safari/iOS).</div>
+      <div class="printer-section-title"><h4>Impresoras en red (WiFi)</h4></div>
+      <div id="printersRedList"></div>
+      <div class="row-between" style="margin-top:6px">
+        <input class="input" id="pRedNombre" placeholder="Nombre (ej: Impresora barra)" style="max-width:220px">
+        <input class="input" id="pRedIp" placeholder="IP (ej: 192.168.1.50)" style="max-width:180px">
+        <input class="input" id="pRedPuerto" placeholder="Puerto" value="9100" style="max-width:100px">
+        <button class="btn btn-sm btn-brand" id="btnAgregarPRed">+ Agregar impresora de red</button>
+      </div>
+      <div class="printer-section-title"><h4>Impresoras Bluetooth</h4></div>
+      <div id="printersBtList"></div>
+      <button class="btn btn-sm btn-brand" id="btnBuscarBt" style="margin-top:6px">🔍 Buscar impresora Bluetooth</button>
+    `;
+    await pintarImpresorasAdmin();
+    document.getElementById('btnAgregarPRed').addEventListener('click', agregarImpresoraRed);
+    document.getElementById('btnBuscarBt').addEventListener('click', buscarImpresoraBluetooth);
   }
   if(tab==='meseros'){
     const { data: ms } = await supa.from('meseros').select('*').eq('restaurante_id', state.restaurante.id).order('nombre');
@@ -1901,6 +2039,159 @@ async function renderTab(tab){
     });
   }
 }
+/* =============================================================
+   HISTORIAL DE TICKETS (admin)
+   ============================================================= */
+async function cargarYPintarTickets(){
+  const { data, error } = await supa.from('tickets').select('*').eq('restaurante_id', state.restaurante.id).order('creado_en', {ascending:false});
+  if(error){
+    document.getElementById('ticketsContent').innerHTML = '<p style="color:var(--muted)">No se pudo cargar el historial. Verifica que exista la tabla "tickets" en Supabase.</p>';
+    return;
+  }
+  state._todosTickets = data || [];
+  pintarTicketsAgrupados('');
+}
+function pintarTicketsAgrupados(filtroNumero){
+  const cont = document.getElementById('ticketsContent');
+  if(!cont) return;
+  let lista = state._todosTickets || [];
+  if(filtroNumero){
+    lista = lista.filter(t=> String(t.numero).includes(filtroNumero));
+  }
+  if(!lista.length){
+    cont.innerHTML = '<p style="color:var(--muted)">No se encontraron tickets.</p>';
+    return;
+  }
+  // Agrupar por mesero y luego por fecha
+  const grupos = {};
+  lista.forEach(t=>{
+    const meseroKey = t.mesero_nombre || 'Sin mesero';
+    const fechaKey = new Date(t.creado_en).toLocaleDateString('es-CO');
+    grupos[meseroKey] = grupos[meseroKey] || {};
+    grupos[meseroKey][fechaKey] = grupos[meseroKey][fechaKey] || [];
+    grupos[meseroKey][fechaKey].push(t);
+  });
+  let html = '';
+  Object.keys(grupos).sort().forEach(mesero=>{
+    Object.keys(grupos[mesero]).sort((a,b)=> new Date(b.split('/').reverse().join('-')) - new Date(a.split('/').reverse().join('-'))).forEach(fecha=>{
+      const tickets = grupos[mesero][fecha];
+      const totalDia = tickets.reduce((s,t)=>s+Number(t.total),0);
+      const groupId = 'tg_' + mesero.replace(/\W/g,'') + '_' + fecha.replace(/\W/g,'');
+      html += `
+        <div class="ticket-group">
+          <div class="ticket-group-head" data-toggle="${groupId}">
+            <div><div class="tgh-title">${mesero}</div><div class="tgh-meta">${fecha} · ${tickets.length} tickets</div></div>
+            <div class="tgh-meta">${money(totalDia)}</div>
+          </div>
+          <div class="ticket-group-body ${filtroNumero?'':'hidden'}" id="${groupId}">
+            <table class="data-table"><thead><tr><th>N.º</th><th>Hora</th><th>Mesa</th><th>Cliente</th><th>Total</th><th></th></tr></thead><tbody>
+              ${tickets.map(t=>`<tr>
+                <td class="ticket-num">#${t.numero}</td>
+                <td>${new Date(t.creado_en).toLocaleTimeString('es-CO')}</td>
+                <td>${t.mesa_nombre}</td>
+                <td>${t.cliente_nombre}</td>
+                <td>${money(t.total)}</td>
+                <td><button class="btn btn-sm" data-reimprimir="${t.id}">🖨️ Reimprimir</button></td>
+              </tr>`).join('')}
+            </tbody></table>
+          </div>
+        </div>`;
+    });
+  });
+  cont.innerHTML = html;
+  cont.querySelectorAll('[data-toggle]').forEach(h=> h.addEventListener('click', ()=>{
+    document.getElementById(h.getAttribute('data-toggle')).classList.toggle('hidden');
+  }));
+  cont.querySelectorAll('[data-reimprimir]').forEach(b=> b.addEventListener('click', ()=>{
+    const t = lista.find(x=>x.id===b.getAttribute('data-reimprimir'));
+    if(t) reimprimirTicketGuardado(t);
+  }));
+}
+function reimprimirTicketGuardado(t){
+  const totales = {
+    subtotal: Number(t.subtotal), totalImpuestos: Number(t.impuestos), propina: Number(t.propina), total: Number(t.total),
+    propinaPct: t.subtotal>0 ? Math.round((Number(t.propina)/Number(t.subtotal))*100) : 0,
+    lineasImpuestos: []
+  };
+  imprimirTicketHTML({
+    restauranteNombre: state.restaurante.nombre, mesaNombre: t.mesa_nombre, clienteNombre: t.cliente_nombre,
+    fecha: new Date(t.creado_en).toLocaleString('es-CO'), items: t.items||[], totales, numero: t.numero, reimpresion:true
+  });
+}
+
+/* =============================================================
+   IMPRESORAS (WiFi / Bluetooth)
+   ============================================================= */
+async function pintarImpresorasAdmin(){
+  const { data, error } = await supa.from('impresoras').select('*').eq('restaurante_id', state.restaurante.id).order('creado_en');
+  if(error){
+    document.getElementById('printersRedList').innerHTML = '<p style="color:var(--muted)">No se pudo cargar. Verifica que exista la tabla "impresoras" en Supabase.</p>';
+    document.getElementById('printersBtList').innerHTML = '';
+    return;
+  }
+  state._impresoras = data || [];
+  const red = state._impresoras.filter(p=>p.tipo==='red');
+  const bt = state._impresoras.filter(p=>p.tipo==='bluetooth');
+  document.getElementById('printersRedList').innerHTML = red.length ? red.map(p=>`
+    <div class="printer-card">
+      <div class="pc-info"><div class="pc-name">🖨️ ${p.nombre}</div><div class="pc-meta">${p.ip}:${p.puerto||9100}</div></div>
+      <div class="pc-actions">
+        <button class="btn btn-sm" data-probar="${p.id}">Probar conexión</button>
+        <button class="btn btn-sm btn-danger" data-borrar-imp="${p.id}">Eliminar</button>
+      </div>
+    </div>`).join('') : '<p style="color:var(--muted);font-size:13px">Sin impresoras de red agregadas.</p>';
+  document.getElementById('printersBtList').innerHTML = bt.length ? bt.map(p=>`
+    <div class="printer-card">
+      <div class="pc-info"><div class="pc-name">🔵 ${p.nombre}</div><div class="pc-meta">Bluetooth vinculada</div></div>
+      <div class="pc-actions"><button class="btn btn-sm btn-danger" data-borrar-imp="${p.id}">Eliminar</button></div>
+    </div>`).join('') : '<p style="color:var(--muted);font-size:13px">Sin impresoras Bluetooth vinculadas.</p>';
+  document.querySelectorAll('[data-probar]').forEach(b=> b.addEventListener('click', ()=> probarConexionImpresora(b.getAttribute('data-probar'))));
+  document.querySelectorAll('[data-borrar-imp]').forEach(b=> b.addEventListener('click', async ()=>{
+    await supa.from('impresoras').delete().eq('id', b.getAttribute('data-borrar-imp'));
+    await pintarImpresorasAdmin();
+    toast('Impresora eliminada');
+  }));
+}
+async function agregarImpresoraRed(){
+  const nombre = document.getElementById('pRedNombre').value.trim();
+  const ip = document.getElementById('pRedIp').value.trim();
+  const puerto = Number(document.getElementById('pRedPuerto').value)||9100;
+  if(!nombre || !ip){ toast('Escribe el nombre y la IP de la impresora','err'); return; }
+  const { error } = await supa.from('impresoras').insert({ restaurante_id: state.restaurante.id, nombre, ip, puerto, tipo:'red', activa:true });
+  if(error){ toast('No se pudo guardar. Verifica la tabla "impresoras" en Supabase.','err'); return; }
+  document.getElementById('pRedNombre').value=''; document.getElementById('pRedIp').value=''; document.getElementById('pRedPuerto').value='9100';
+  await pintarImpresorasAdmin();
+  toast('Impresora de red agregada');
+}
+async function probarConexionImpresora(id){
+  const p = (state._impresoras||[]).find(x=>x.id===id);
+  if(!p) return;
+  toast('Probando conexión con '+p.ip+'…');
+  try{
+    await fetch(`http://${p.ip}:${p.puerto||9100}`, {mode:'no-cors', signal: AbortSignal.timeout(3000)});
+    toast('La impresora respondió (o al menos el host está en línea)');
+  }catch(err){
+    toast('No se pudo confirmar la conexión desde el navegador. Esto es normal: revisa que la impresora esté encendida y en la misma red.','err');
+  }
+}
+async function buscarImpresoraBluetooth(){
+  if(!navigator.bluetooth){
+    toast('Este navegador no soporta Bluetooth (usa Chrome/Edge en computador o Android)','err');
+    return;
+  }
+  try{
+    const device = await navigator.bluetooth.requestDevice({ acceptAllDevices:true, optionalServices:['000018f0-0000-1000-8000-00805f9b34fb'] });
+    const { error } = await supa.from('impresoras').insert({
+      restaurante_id: state.restaurante.id, nombre: device.name || 'Impresora Bluetooth', tipo:'bluetooth', bluetooth_id: device.id, activa:true
+    });
+    if(error){ toast('No se pudo guardar. Verifica la tabla "impresoras" en Supabase.','err'); return; }
+    await pintarImpresorasAdmin();
+    toast('Impresora Bluetooth vinculada: ' + (device.name||''));
+  }catch(err){
+    if(err.name !== 'NotFoundError') toast('No se pudo buscar la impresora Bluetooth','err');
+  }
+}
+
 function nombreMeseroCruce(id){
   return (state._cruceMeseros||[]).find(m=>m.id===id)?.nombre || 'Sin mesero';
 }
@@ -1970,8 +2261,89 @@ function pintarCruceAdmin(){
 function pintarInvAdmin(){
   const tbody = document.getElementById('invAdminTbody');
   if(!tbody) return;
-  tbody.innerHTML = state.productos.map(p=>`<tr><td>${p.nombre}</td><td>${p.categoria}</td><td>${money(p.precio)}</td><td><button class="btn btn-sm" data-ed="${p.id}">✏️</button></td></tr>`).join('');
+  tbody.innerHTML = state.productos.map(p=>`<tr>
+    <td>${p.imagen?`<img src="${p.imagen}" class="prod-thumb">`:'<div class="prod-thumb-empty">📦</div>'}</td>
+    <td>${p.nombre}</td><td>${p.categoria}</td><td>${money(p.precio)}</td><td>${p.cantidad!=null?p.cantidad:'—'}</td>
+    <td><button class="btn btn-sm" data-ed="${p.id}">✏️</button></td></tr>`).join('') || '<tr><td colspan="6">Sin productos aún</td></tr>';
   tbody.querySelectorAll('[data-ed]').forEach(b=> b.addEventListener('click', ()=> formularioProducto(b.getAttribute('data-ed'), {querySelector:()=>null})));
+}
+
+/* =============================================================
+   CARGA MASIVA DE PRODUCTOS DESDE EXCEL
+   ============================================================= */
+function descargarPlantillaExcel(){
+  const wsData = [
+    ['producto','cantidad','precio','imagen'],
+    ['Ej: Cerveza Águila', 24, 5000, ''],
+    ['Ej: Papas fritas', 15, 8000, '']
+  ];
+  const ws = XLSX.utils.aoa_to_sheet(wsData);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Productos');
+  XLSX.writeFile(wb, 'plantilla_productos.xlsx');
+}
+function manejarArchivoExcelProductos(file){
+  const reader = new FileReader();
+  reader.onload = (e)=>{
+    try{
+      const wb = XLSX.read(e.target.result, {type:'array'});
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const filas = XLSX.utils.sheet_to_json(ws, {defval:''});
+      if(!filas.length){ toast('El archivo no tiene filas de datos','err'); return; }
+      const normaliza = (obj, claves) => {
+        for(const k of Object.keys(obj)){
+          const kNorm = k.toString().trim().toLowerCase();
+          if(claves.includes(kNorm)) return obj[k];
+        }
+        return undefined;
+      };
+      const productosParseados = filas.map(f=>{
+        const nombre = normaliza(f, ['producto','nombre']);
+        const cantidad = normaliza(f, ['cantidad','stock']);
+        const precio = normaliza(f, ['precio']);
+        const imagen = normaliza(f, ['imagen','imagen url','imagen_url']);
+        return {
+          nombre: nombre!=null ? String(nombre).trim() : '',
+          cantidad: Number(cantidad)||0,
+          precio: Number(precio)||0,
+          imagen: imagen ? String(imagen).trim() : null
+        };
+      }).filter(p=>p.nombre);
+      if(!productosParseados.length){ toast('No se encontraron productos válidos. Revisa las columnas del archivo.','err'); return; }
+      mostrarPreviaExcelProductos(productosParseados);
+    }catch(err){
+      console.error(err);
+      toast('No se pudo leer el archivo. Verifica que sea un Excel/CSV válido.','err');
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+function mostrarPreviaExcelProductos(productos){
+  const overlay = abrirModal(`
+    <div class="modal-head"><h3>Confirmar carga (${productos.length} productos)</h3><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button></div>
+    <p class="modal-sub">Revisa los datos antes de agregarlos al inventario. Las imágenes se cargan luego, una por una, desde la tabla de inventario.</p>
+    <div class="excel-preview-table">
+      <table class="data-table"><thead><tr><th>Producto</th><th>Cantidad</th><th>Precio</th></tr></thead>
+      <tbody>${productos.map(p=>`<tr><td>${p.nombre}</td><td>${p.cantidad}</td><td>${money(p.precio)}</td></tr>`).join('')}</tbody></table>
+    </div>
+    <button class="btn btn-brand btn-block" id="btnConfirmarCargaExcel">Agregar ${productos.length} productos al inventario</button>
+  `, {wide:true});
+  overlay.querySelector('#btnConfirmarCargaExcel').addEventListener('click', async ()=>{
+    const payload = productos.map(p=>({
+      nombre: p.nombre, categoria:'General', precio:p.precio, cantidad:p.cantidad, imagen:p.imagen,
+      restaurante_id: state.restaurante.id
+    }));
+    const { error } = await supa.from('productos').insert(payload);
+    if(error){
+      console.error(error);
+      toast('Error al guardar. Verifica que la tabla productos tenga las columnas cantidad e imagen.','err');
+      return;
+    }
+    await cargarProductos();
+    cerrarModal(overlay);
+    pintarInvAdmin();
+    toast(`${productos.length} productos cargados al inventario`);
+  });
 }
 async function pintarImpuestosAdmin(){
   const tbody = document.getElementById('impAdminTbody');
