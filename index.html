@@ -129,6 +129,7 @@ input.input:focus, select.input:focus{outline:none;border-color:var(--brand);}
 .dot{width:9px;height:9px;border-radius:50%;}
 
 .fab{position:absolute; right:16px; bottom:16px; z-index:6;}
+.scan-pulsera-btn{white-space:nowrap;}
 .mode-banner{
   position:absolute; top:14px; left:50%; transform:translateX(-50%); z-index:6;
   background:var(--brand); color:#1a1305; padding:10px 18px; border-radius:100px; font-size:13.5px; font-weight:600;
@@ -243,6 +244,10 @@ table.data-table tr:last-child td{border-bottom:none;}
   .tabs-row{justify-content:flex-start;}
   .fab{left:50%; right:auto; transform:translateX(-50%); bottom:18px; width:calc(100% - 32px); max-width:320px;}
   .fab .btn{width:100%;}
+  .scan-pulsera-btn{
+    position:fixed; left:12px; top:50%; transform:translateY(-50%); z-index:20;
+    box-shadow:0 8px 22px rgba(0,0,0,.5); writing-mode:horizontal-tb;
+  }
   .actions-bar .btn{flex:1 1 100%; max-width:none;}
   .sillas-grid{grid-template-columns:repeat(auto-fill, minmax(78px,1fr));}
   .login-card{padding:26px 20px;}
@@ -297,6 +302,7 @@ table.data-table tr:last-child td{border-bottom:none;}
       <div class="who" id="topWho">—</div>
     </div>
     <div class="topbar-actions">
+      <button class="btn btn-sm scan-pulsera-btn" id="btnEscanearPulseraMapa">📶 Escanear pulsera</button>
       <button class="btn btn-sm" id="btnInventarioTop">📦 Inventario</button>
       <button class="btn btn-sm" id="btnMisMesas">📋 Mis mesas</button>
       <button class="btn btn-sm btn-ghost" id="btnSalirMapa">Salir</button>
@@ -324,6 +330,7 @@ table.data-table tr:last-child td{border-bottom:none;}
   <div class="topbar">
     <div><div class="rest-name">Panel de administración</div><div class="who" id="adminRestName">—</div></div>
     <div class="topbar-actions">
+      <button class="btn btn-sm scan-pulsera-btn" id="btnEscanearPulseraAdmin">📶 Escanear pulsera</button>
       <button class="btn btn-sm" id="btnVerMapaAdmin">🗺️ Ver mapa</button>
       <button class="btn btn-sm btn-ghost" id="btnSalirAdmin">Salir</button>
     </div>
@@ -1458,6 +1465,64 @@ window.abrirTomarPedido = function(mesaId, clientePreseleccionado){
     }
   });
 }
+
+/* =============================================================
+   ESCANEAR PULSERA SIN ENTRAR A LA MESA
+   ----------------------------------------------------------------
+   Botón disponible en el mapa del mesero y en el dashboard del
+   admin. Busca al cliente dueño de la pulsera en TODAS las mesas
+   del restaurante (no solo en una mesa abierta) y, si lo encuentra,
+   abre directamente el mismo formulario de "Tomar pedido" que se
+   usa desde dentro de la mesa, ya cargado con ese cliente.
+   ============================================================= */
+window.abrirEscaneoPulseraGlobal = async function(){
+  const overlay = abrirModal(`
+    <div class="modal-head"><h3>Escanear pulsera</h3><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button></div>
+    <p class="modal-sub">Busca al cliente en cualquier mesa sin necesidad de entrar a ella.</p>
+    <div class="nfc-scan-box" id="nfcBoxGlobal">
+      <div class="nfc-pulse" id="nfcPulse"></div>
+      <div id="nfcTexto" style="font-size:13px;color:var(--muted)">Cargando datos del restaurante…</div>
+      <div class="propina-row" style="justify-content:center;margin-top:10px">
+        <button class="btn btn-sm" id="btnEscanearGlobalCelular">📶 Celular</button>
+        <button class="btn btn-sm btn-ghost" id="btnEscanearGlobalUsb">🖥️ Lector USB</button>
+      </div>
+    </div>
+  `);
+
+  // asegura que clientesPorMesa esté al día, sin importar si venimos
+  // del dashboard admin (que no carga el mapa) o del mapa del mesero
+  await cargarProductos();
+  await cargarMesas();
+  const texto = document.getElementById('nfcTexto');
+  if(texto) texto.textContent = 'Acerca la pulsera al lector NFC…';
+
+  function buscarClientePorCodigo(codigo){
+    for(const mesaId of Object.keys(state.clientesPorMesa)){
+      const encontrado = (state.clientesPorMesa[mesaId]||[]).find(c=>c.nfc_codigo === codigo);
+      if(encontrado) return { mesaId, cliente: encontrado };
+    }
+    return null;
+  }
+
+  const onLectura = (codigo)=>{
+    const resultado = buscarClientePorCodigo(codigo);
+    if(resultado){
+      if(abortNFC){ abortNFC.abort(); abortNFC = null; }
+      detenerEscaneoUSB();
+      cerrarModal(overlay);
+      toast('Cargando pedido de ' + resultado.cliente.nombre);
+      abrirTomarPedido(resultado.mesaId, resultado.cliente.id);
+    } else {
+      toast('Esa pulsera no está asignada a ningún cliente', 'err');
+      const t = document.getElementById('nfcTexto');
+      if(t) t.textContent = 'Pulsera no reconocida en ninguna mesa. Intenta de nuevo o verifica que el cliente tenga pulsera asignada.';
+    }
+  };
+  document.getElementById('btnEscanearGlobalCelular').addEventListener('click', ()=> iniciarEscaneoNFC(onLectura));
+  document.getElementById('btnEscanearGlobalUsb').addEventListener('click', ()=> iniciarEscaneoUSB(onLectura));
+}
+document.getElementById('btnEscanearPulseraMapa').addEventListener('click', abrirEscaneoPulseraGlobal);
+document.getElementById('btnEscanearPulseraAdmin').addEventListener('click', abrirEscaneoPulseraGlobal);
 
 /* =============================================================
    VER CUENTA / CERRAR MESA / IMPRESIÓN 58mm
