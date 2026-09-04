@@ -33,7 +33,7 @@
   --font-body:'Inter', sans-serif;
 }
 *{box-sizing:border-box;}
-html,body{margin:0;padding:0;height:100%;background:var(--bg);color:var(--text);font-family:var(--font-body);overflow:hidden;}
+html,body{margin:0;padding:0;height:100%;height:100dvh;background:var(--bg);color:var(--text);font-family:var(--font-body);overflow:hidden;}
 h1,h2,h3,h4{font-family:var(--font-head);margin:0;font-weight:600;}
 button{font-family:var(--font-body);cursor:pointer;}
 input,select{font-family:var(--font-body);}
@@ -113,7 +113,7 @@ input.input:focus, select.input:focus{outline:none;border-color:var(--brand);}
 /* ============================================================
    MAPA (pantalla principal del mesero)
    ============================================================ */
-#screen-mapa{height:100%; display:flex; flex-direction:column;}
+#screen-mapa{height:100%; display:flex; flex-direction:column; position:relative;}
 .topbar{
   display:flex; align-items:center; justify-content:space-between; gap:10px;
   padding:10px 16px; background:var(--panel); border-bottom:1px solid var(--line); z-index:5;
@@ -244,9 +244,9 @@ table.data-table tr:last-child td{border-bottom:none;}
   .tabs-row{justify-content:flex-start;}
   .fab{left:50%; right:auto; transform:translateX(-50%); bottom:18px; width:calc(100% - 32px); max-width:320px;}
   .fab .btn{width:100%;}
-  .scan-pulsera-btn{
-    position:fixed; left:12px; top:50%; transform:translateY(-50%); z-index:20;
-    box-shadow:0 8px 22px rgba(0,0,0,.5); writing-mode:horizontal-tb;
+  #screen-mapa .scan-pulsera-btn{
+    position:absolute; left:12px; top:50%; transform:translateY(-50%); z-index:20;
+    box-shadow:0 8px 22px rgba(0,0,0,.5);
   }
   .actions-bar .btn{flex:1 1 100%; max-width:none;}
   .sillas-grid{grid-template-columns:repeat(auto-fill, minmax(78px,1fr));}
