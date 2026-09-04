@@ -328,6 +328,7 @@ table.data-table tr:last-child td{border-bottom:none;}
       <div class="who" id="topWho">—</div>
     </div>
     <div class="topbar-actions">
+      <button class="btn btn-sm hidden" id="btnDashboardAdmin">📊 Dashboard</button>
       <button class="btn btn-sm" id="btnInventarioTop">📦 Inventario</button>
       <button class="btn btn-sm" id="btnMisMesas">📋 Mis mesas</button>
       <button class="btn btn-sm btn-ghost" id="btnSalirMapa">Salir</button>
@@ -683,6 +684,7 @@ function pedirAutorizacionAdmin(callback){
 async function entrarAlMapa(){
   document.getElementById('topRestName').textContent = state.restaurante.nombre;
   document.getElementById('topWho').textContent = 'Mesero: ' + state.mesero.nombre;
+  document.getElementById('btnDashboardAdmin').classList.add('hidden');
   showOnly('screen-mapa');
   await cargarProductos();
   await cargarMesas();
@@ -697,10 +699,19 @@ document.getElementById('btnVerMapaAdmin').addEventListener('click', async ()=>{
   state.mesero = null;
   document.getElementById('topRestName').textContent = state.restaurante.nombre;
   document.getElementById('topWho').textContent = 'Administrador';
+  document.getElementById('btnDashboardAdmin').classList.remove('hidden');
   showOnly('screen-mapa');
   await cargarProductos(); await cargarMesas();
   if(!threeInicializado) initThree(); else renderMesas3D();
   suscribirRealtime();
+});
+document.getElementById('btnDashboardAdmin').addEventListener('click', async ()=>{
+  document.getElementById('adminRestName').textContent = state.restaurante.nombre;
+  document.querySelectorAll('#screen-admin .tabs-row [data-tab]').forEach(x=>x.classList.remove('active'));
+  const btnReportes = document.querySelector('#screen-admin .tabs-row [data-tab="reportes"]');
+  if(btnReportes) btnReportes.classList.add('active');
+  await renderTab('reportes');
+  showOnly('screen-admin');
 });
 document.getElementById('btnVolverMapa').addEventListener('click', ()=> showOnly('screen-mapa'));
 
@@ -1793,14 +1804,20 @@ function pintarInventario(overlay, puedeEditar){
 }
 function formularioProducto(id, overlayPadre){
   const p = id ? state.productos.find(x=>x.id===id) : null;
+  const yaEsUrl = p && p.imagen && !p.imagen.startsWith('data:');
   const overlay = abrirModal(`
     <div class="modal-head"><h3>${p?'Editar':'Nuevo'} producto</h3><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button></div>
-    <div style="display:flex;gap:14px;align-items:center;margin-bottom:6px">
-      <div id="pfImgPreviewWrap">${p&&p.imagen?`<img src="${p.imagen}" class="prod-thumb" style="width:56px;height:56px" id="pfImgPreview">`:`<div class="prod-thumb-empty" style="width:56px;height:56px;font-size:20px" id="pfImgPreview">📦</div>`}</div>
-      <div>
-        <input type="file" accept="image/*" id="pfImagenFile" class="hidden">
-        <button type="button" class="btn btn-sm" id="pfSubirImagen">📷 ${p&&p.imagen?'Cambiar imagen':'Subir imagen'}</button>
-        <div class="modal-sub" style="margin-top:4px">Se guarda solo en este producto.</div>
+    <div style="display:flex;gap:14px;align-items:flex-start;margin-bottom:6px">
+      <div id="pfImgPreviewWrap">${p&&p.imagen?`<img src="${p.imagen}" class="prod-thumb" style="width:56px;height:56px" id="pfImgPreview" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'prod-thumb-empty',style:'width:56px;height:56px;font-size:20px',textContent:'⚠️'}))">`:`<div class="prod-thumb-empty" style="width:56px;height:56px;font-size:20px" id="pfImgPreview">📦</div>`}</div>
+      <div style="flex:1">
+        <label class="field" style="margin-top:0">Imagen — pega la URL (recomendado)</label>
+        <input class="input" id="pfImagenUrl" placeholder="https://…" value="${yaEsUrl?p.imagen:''}">
+        <div style="display:flex;align-items:center;gap:8px;margin-top:8px">
+          <span class="modal-sub">o</span>
+          <input type="file" accept="image/*" id="pfImagenFile" class="hidden">
+          <button type="button" class="btn btn-sm" id="pfSubirImagen">📁 Subir archivo</button>
+        </div>
+        <div class="modal-sub" style="margin-top:4px">Pegar la URL de una imagen ya alojada en internet evita guardar la foto dentro de la base de datos. Subir un archivo sí la guarda como parte del producto.</div>
       </div>
     </div>
     <label class="field">Nombre</label><input class="input" id="pfNombre" value="${p?p.nombre:''}">
@@ -1815,6 +1832,17 @@ function formularioProducto(id, overlayPadre){
     </div>
   `);
   let imagenPendiente = (p && p.imagen) || null;
+  function actualizarPreview(url){
+    const wrap = overlay.querySelector('#pfImgPreviewWrap');
+    wrap.innerHTML = url
+      ? `<img src="${url}" class="prod-thumb" style="width:56px;height:56px" id="pfImgPreview" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'prod-thumb-empty',style:'width:56px;height:56px;font-size:20px',textContent:'⚠️'}))">`
+      : `<div class="prod-thumb-empty" style="width:56px;height:56px;font-size:20px" id="pfImgPreview">📦</div>`;
+  }
+  overlay.querySelector('#pfImagenUrl').addEventListener('input', (e)=>{
+    const url = e.target.value.trim();
+    imagenPendiente = url || null;
+    actualizarPreview(imagenPendiente);
+  });
   overlay.querySelector('#pfSubirImagen').addEventListener('click', ()=> overlay.querySelector('#pfImagenFile').click());
   overlay.querySelector('#pfImagenFile').addEventListener('change', async (e)=>{
     const file = e.target.files[0];
@@ -1822,8 +1850,8 @@ function formularioProducto(id, overlayPadre){
     try{
       const dataUrl = await leerImagenComoDataURL(file);
       imagenPendiente = dataUrl;
-      const wrap = overlay.querySelector('#pfImgPreviewWrap');
-      wrap.innerHTML = `<img src="${dataUrl}" class="prod-thumb" style="width:56px;height:56px" id="pfImgPreview">`;
+      overlay.querySelector('#pfImagenUrl').value = '';
+      actualizarPreview(dataUrl);
     }catch(err){ toast('No se pudo leer la imagen','err'); }
   });
   overlay.querySelector('#pfGuardar').addEventListener('click', async ()=>{
