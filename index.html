@@ -485,8 +485,8 @@ const state = {
   mesero: null,            // mesero autenticado (o null si admin)
   esAdmin: false,
   esSuperAdmin: false,
-  adminPassword: '0000',
-  superadminPassword: 'admin123',
+  superadminPassword: 'admin123', // contraseña del admin general (todos los restaurantes)
+  impuestosPorRestaurante: {},    // restauranteId -> impuestos[] (para calcular recibos de plaza de OTROS restaurantes)
   mesas: [],               // cache de mesas del restaurante
   sillasPorMesa: {},       // mesaId -> [sillas]
   clientesPorMesa: {},     // mesaId -> [clientes]
@@ -577,12 +577,14 @@ async function iniciar(){
   state.restaurante = rest || null;
   document.getElementById('loginRestName').textContent = rest ? rest.nombre : 'No hay restaurantes configurados';
 
-  // cargar config admin
+  // cargar config del admin general (superadmin). La contraseña del admin de
+  // CADA restaurante ahora vive en restaurantes.password (una por restaurante).
   const { data: cfg } = await supa.from('config_admin').select('*').eq('id',1).single();
-  if(cfg){
-    state.adminPassword = cfg.password;
-    if(cfg.superadmin_password) state.superadminPassword = cfg.superadmin_password;
-  }
+  if(cfg && cfg.superadmin_password) state.superadminPassword = cfg.superadmin_password;
+}
+// Contraseña de admin del restaurante activo (cada restaurante tiene la suya propia).
+function passwordAdminRestaurante(rest){
+  return (rest && rest.password) ? rest.password : '0000';
 }
 
 /* =============================================================
@@ -593,9 +595,16 @@ async function cargarImpuestos(){
   const { data } = await supa.from('impuestos').select('*').eq('restaurante_id', state.restaurante.id).eq('activo', true).order('nombre');
   state.impuestos = data || [];
 }
-function calcularTotales(subtotal, propinaPct=0){
+// Impuestos de OTRO restaurante de la plaza (para armar su recibo aparte al cerrar la cuenta).
+async function cargarImpuestosDeRestaurante(restId){
+  if(state.impuestosPorRestaurante[restId]) return state.impuestosPorRestaurante[restId];
+  const { data } = await supa.from('impuestos').select('*').eq('restaurante_id', restId).eq('activo', true).order('nombre');
+  state.impuestosPorRestaurante[restId] = data || [];
+  return state.impuestosPorRestaurante[restId];
+}
+function calcularTotalesConImpuestos(subtotal, impuestosList, propinaPct=0){
   subtotal = Number(subtotal)||0;
-  const lineasImpuestos = state.impuestos.map(imp=>({
+  const lineasImpuestos = (impuestosList||[]).map(imp=>({
     nombre: imp.nombre,
     porcentaje: Number(imp.porcentaje),
     valor: subtotal * (Number(imp.porcentaje)/100)
@@ -605,10 +614,55 @@ function calcularTotales(subtotal, propinaPct=0){
   const total = subtotal + totalImpuestos + propina;
   return { subtotal, lineasImpuestos, totalImpuestos, propinaPct:Number(propinaPct||0), propina, total };
 }
+function calcularTotales(subtotal, propinaPct=0){
+  return calcularTotalesConImpuestos(subtotal, state.impuestos, propinaPct);
+}
+
+/* =============================================================
+   PEDIDOS DE PLAZA PENDIENTES DE UNA MESA (agrupados por restaurante)
+   ----------------------------------------------------------------
+   Como el mesero ya no pertenece a un solo restaurante, una misma
+   mesa puede tener pedidos hacia VARIOS restaurantes de la plaza a
+   la vez. Al cerrar la cuenta hay que generar un recibo aparte por
+   cada restaurante involucrado, además del recibo del restaurante
+   "dueño" de la mesa.
+   ============================================================= */
+async function obtenerGruposPlazaMesa(mesaId, clienteId){
+  let q = supa.from('pedidos_plaza').select('*').eq('mesa_id', mesaId).neq('estado','cerrado');
+  if(clienteId) q = q.eq('cliente_id', clienteId);
+  const { data } = await q;
+  const filas = data || [];
+  const grupos = {};
+  for(const fila of filas){
+    const restId = fila.restaurante_id;
+    if(!grupos[restId]) grupos[restId] = { restauranteId: restId, nombre: nombreRestaurantePorId(restId), items: [], filaIds: [], clientes: new Set() };
+    (fila.items||[]).forEach(it=> grupos[restId].items.push(Object.assign({cliente_nombre: fila.cliente_nombre}, it)));
+    grupos[restId].filaIds.push(fila.id);
+    if(fila.cliente_nombre) grupos[restId].clientes.add(fila.cliente_nombre);
+  }
+  for(const restId of Object.keys(grupos)){
+    grupos[restId].subtotal = grupos[restId].items.reduce((s,i)=>s+Number(i.precio)*i.cantidad,0);
+    await cargarImpuestosDeRestaurante(restId);
+  }
+  return grupos;
+}
+// Marca como cerrados los pedidos de plaza ya facturados y limpia la caché en memoria.
+async function cerrarGruposPlaza(mesaId, grupos){
+  const ahora = new Date().toISOString();
+  for(const restId of Object.keys(grupos)){
+    const filaIds = grupos[restId].filaIds;
+    if(filaIds.length) await supa.from('pedidos_plaza').update({ estado:'cerrado', cuenta_cobrada_en: ahora, dinero_confirmado:true, dinero_confirmado_en: ahora }).in('id', filaIds);
+  }
+  Object.keys(state.pedidosPlazaEnCurso).forEach(key=>{
+    if(key.startsWith(mesaId+'|')) delete state.pedidosPlazaEnCurso[key];
+  });
+}
 
 document.getElementById('btnSoyMesero').addEventListener('click', async ()=>{
   if(!state.restaurante){ toast('Selecciona un restaurante', 'err'); return; }
-  const { data: meseros } = await supa.from('meseros').select('*').eq('restaurante_id', state.restaurante.id).eq('activo', true).order('nombre');
+  // Los meseros son de toda la plaza (no pertenecen a un restaurante en particular),
+  // por eso la lista de meseros para el PIN NO se filtra por restaurante.
+  const { data: meseros } = await supa.from('meseros').select('*').eq('activo', true).order('nombre');
   state.meseros = meseros || [];
   const grid = document.getElementById('meseroGrid');
   grid.innerHTML = state.meseros.map(m => `
@@ -650,7 +704,7 @@ document.getElementById('btnSoyAdmin').addEventListener('click', ()=>{
 });
 window.entrarAdmin = async function(){
   const pass = document.getElementById('adminPassInput').value;
-  if(pass === state.adminPassword){
+  if(pass === passwordAdminRestaurante(state.restaurante)){
     state.esAdmin = true; state.mesero = null; state.esSuperAdmin = false;
     cerrarTodosModales();
     document.getElementById('adminRestName').textContent = state.restaurante.nombre;
@@ -708,7 +762,7 @@ function pedirAutorizacionAdmin(callback){
   `);
   document.getElementById('authConfirmBtn').addEventListener('click', ()=>{
     const val = document.getElementById('authPassInput').value;
-    if(val === state.adminPassword){
+    if(val === passwordAdminRestaurante(state.restaurante)){
       cerrarModal(overlay);
       callback();
     } else {
@@ -1805,15 +1859,19 @@ window.abrirVerCuenta = function(mesaId){
   `, {wide:true});
 }
 
-window.abrirCerrarMesa = function(mesaId){
+window.abrirCerrarMesa = async function(mesaId){
   const mesa = state.mesas.find(m=>m.id===mesaId);
   const clientes = state.clientesPorMesa[mesaId]||[];
   const cuentas = mesa.cuentas_separadas ? clientes : [{id:'__total__', nombre:'Cuenta única'}];
   let propinaPct = 0;
+  // pedidos hechos por el mesero hacia OTROS restaurantes de la plaza para esta mesma mesa:
+  // cada uno se factura y liquida por separado, con su propio recibo.
+  const gruposPlaza = await obtenerGruposPlazaMesa(mesaId);
   const overlay = abrirModal(`
     <div class="modal-head"><h3>Cerrar mesa — ${mesa.nombre}</h3><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button></div>
     <p class="modal-sub">Imprime cada cuenta y luego confirma la liquidación.</p>
     <div id="cuentasParaCerrar"></div>
+    ${Object.keys(gruposPlaza).length ? `<h4 style="margin-top:14px;font-size:13px;color:var(--muted);text-transform:uppercase">Pedidos a otros restaurantes de la plaza</h4><p class="modal-sub" style="margin-bottom:6px">Se factura y liquida un recibo aparte para cada restaurante.</p><div id="cuentasPlazaParaCerrar"></div>` : ''}
     <label class="field">Propina (opcional)</label>
     <div class="propina-row" id="propinaRow">
       <button class="btn btn-brand" data-prop="0">Sin propina</button>
@@ -1823,11 +1881,12 @@ window.abrirCerrarMesa = function(mesaId){
     <button class="btn btn-danger btn-block" style="margin-top:16px" id="btnConfirmarLiquidar">Confirmar liquidación y liberar mesa</button>
   `, {wide:true});
   const zone = overlay.querySelector('#cuentasParaCerrar');
+  const zonaPlaza = overlay.querySelector('#cuentasPlazaParaCerrar');
   function pintarCuentas(){
     zone.innerHTML = cuentas.map(c=>{
       const subtotal = c.id==='__total__' ? totalMesa(mesaId) : totalesCliente(mesaId, c.id);
       const t = calcularTotales(subtotal, propinaPct);
-      return `<div class="linea-item"><span>${c.nombre}</span><span style="display:flex;gap:10px;align-items:center">${money(t.total)} <button class="btn btn-sm" data-imprimir="${c.id}">🖨️ Imprimir</button></span></div>`;
+      return `<div class="linea-item"><span>${c.nombre} <span style="color:var(--muted);font-size:12px">(${state.restaurante.nombre})</span></span><span style="display:flex;gap:10px;align-items:center">${money(t.total)} <button class="btn btn-sm" data-imprimir="${c.id}">🖨️ Imprimir</button></span></div>`;
     }).join('');
     zone.querySelectorAll('[data-imprimir]').forEach(btn=>{
       btn.addEventListener('click', ()=>{
@@ -1837,6 +1896,19 @@ window.abrirCerrarMesa = function(mesaId){
         imprimirTicket(mesa, cuenta, mesaId, calcularTotales(subtotal, propinaPct));
       });
     });
+    if(zonaPlaza){
+      zonaPlaza.innerHTML = Object.keys(gruposPlaza).map(restId=>{
+        const g = gruposPlaza[restId];
+        const t = calcularTotalesConImpuestos(g.subtotal, state.impuestosPorRestaurante[restId], propinaPct);
+        return `<div class="linea-item"><span>🍽️ ${g.nombre} <span style="color:var(--muted);font-size:12px">(${[...g.clientes].join(', ')||'plaza'})</span></span><span style="display:flex;gap:10px;align-items:center">${money(t.total)} <button class="btn btn-sm" data-imprimir-plaza="${restId}">🖨️ Imprimir</button></span></div>`;
+      }).join('');
+      zonaPlaza.querySelectorAll('[data-imprimir-plaza]').forEach(btn=>{
+        btn.addEventListener('click', ()=>{
+          const restId = btn.getAttribute('data-imprimir-plaza');
+          imprimirTicketPlaza(restId, gruposPlaza[restId], mesa, propinaPct);
+        });
+      });
+    }
   }
   overlay.querySelectorAll('#propinaRow [data-prop]').forEach(b=> b.addEventListener('click', function(){
     overlay.querySelectorAll('#propinaRow [data-prop]').forEach(x=>x.classList.remove('btn-brand'));
@@ -1845,7 +1917,7 @@ window.abrirCerrarMesa = function(mesaId){
     pintarCuentas();
   }));
   pintarCuentas();
-  overlay.querySelector('#btnConfirmarLiquidar').addEventListener('click', ()=> liquidarMesa(mesaId, overlay, ()=>propinaPct));
+  overlay.querySelector('#btnConfirmarLiquidar').addEventListener('click', ()=> liquidarMesa(mesaId, overlay, ()=>propinaPct, gruposPlaza));
 }
 
 async function imprimirTicket(mesa, cuenta, mesaId, totales){
@@ -1872,6 +1944,32 @@ async function imprimirTicket(mesa, cuenta, mesaId, totales){
     fecha: new Date().toLocaleString('es-CO'), items, totales: t, numero: numeroTicket
   });
 }
+// Recibo aparte para un pedido de plaza (dirigido a OTRO restaurante distinto al dueño de la mesa).
+async function imprimirTicketPlaza(restId, grupo, mesa, propinaPct){
+  const impuestos = state.impuestosPorRestaurante[restId] || await cargarImpuestosDeRestaurante(restId);
+  const t = calcularTotalesConImpuestos(grupo.subtotal, impuestos, propinaPct);
+  const itemsTicket = grupo.items.map(i=>({ producto_nombre: i.nombre, precio_unitario: i.precio, cantidad: i.cantidad }));
+  const clienteNombre = [...grupo.clientes].join(', ') || 'Pedido de plaza';
+
+  let numeroTicket = null;
+  try{
+    const { data, error } = await supa.from('tickets').insert({
+      restaurante_id: restId,
+      mesero_id: state.mesero ? state.mesero.id : null,
+      mesero_nombre: state.mesero ? state.mesero.nombre : 'Admin',
+      mesa_nombre: mesa.nombre + ' (plaza)',
+      cliente_nombre: clienteNombre,
+      items: itemsTicket,
+      subtotal: t.subtotal, impuestos: t.totalImpuestos, propina: t.propina, total: t.total
+    }).select('numero').single();
+    if(!error && data) numeroTicket = data.numero;
+  }catch(err){ console.error('No se pudo guardar el ticket de plaza en el historial', err); }
+
+  imprimirTicketHTML({
+    restauranteNombre: grupo.nombre, mesaNombre: mesa.nombre + ' (plaza)', clienteNombre,
+    fecha: new Date().toLocaleString('es-CO'), items: itemsTicket, totales: t, numero: numeroTicket
+  });
+}
 function imprimirTicketHTML({restauranteNombre, mesaNombre, clienteNombre, fecha, items, totales:t, numero, reimpresion}){
   const div = document.getElementById('ticket-imprimir');
   div.innerHTML = `
@@ -1893,7 +1991,7 @@ function imprimirTicketHTML({restauranteNombre, mesaNombre, clienteNombre, fecha
   window.print();
 }
 
-async function liquidarMesa(mesaId, overlay, getPropinaPct){
+async function liquidarMesa(mesaId, overlay, getPropinaPct, gruposPlaza){
   const mesa = state.mesas.find(m=>m.id===mesaId);
   const clientes = state.clientesPorMesa[mesaId]||[];
   const items = state.pedidosPorMesa[mesaId]||[];
@@ -1908,6 +2006,21 @@ async function liquidarMesa(mesaId, overlay, getPropinaPct){
     mesa_nombre: mesa.nombre, restaurante_id: state.restaurante.id, mesero_id: mesa.mesero_id,
     total: t.total, subtotal: t.subtotal, impuestos: t.totalImpuestos, propina: t.propina, cuentas: cuentasJson
   });
+
+  // liquidar aparte, uno por uno, cada pedido que se hizo hacia OTRO restaurante de la plaza
+  if(gruposPlaza && Object.keys(gruposPlaza).length){
+    for(const restId of Object.keys(gruposPlaza)){
+      const g = gruposPlaza[restId];
+      const tg = calcularTotalesConImpuestos(g.subtotal, state.impuestosPorRestaurante[restId], propinaPct);
+      await supa.from('mesas_liquidadas').insert({
+        mesa_nombre: mesa.nombre + ' (plaza)', restaurante_id: restId, mesero_id: mesa.mesero_id,
+        total: tg.total, subtotal: tg.subtotal, impuestos: tg.totalImpuestos, propina: tg.propina,
+        cuentas: [{cliente:[...g.clientes].join(', ')||'Pedido de plaza', total: tg.total, items: g.items}]
+      });
+    }
+    await cerrarGruposPlaza(mesaId, gruposPlaza);
+  }
+
   // limpiar mesa
   await supa.from('pedidos_items').delete().eq('mesa_id', mesaId);
   const sillaIds = (state.sillasPorMesa[mesaId]||[]).map(s=>s.id);
@@ -1923,16 +2036,19 @@ async function liquidarMesa(mesaId, overlay, getPropinaPct){
 /* =============================================================
    LIQUIDAR UN SOLO CLIENTE (se retira de la mesa sin cerrarla)
    ============================================================= */
-window.abrirLiquidarCliente = function(mesaId, clienteId){
+window.abrirLiquidarCliente = async function(mesaId, clienteId){
   const mesa = state.mesas.find(m=>m.id===mesaId);
   const cliente = (state.clientesPorMesa[mesaId]||[]).find(c=>c.id===clienteId);
   if(!mesa || !cliente) return;
   let propinaPct = 0;
   const subtotal = totalesCliente(mesaId, clienteId);
+  // pedidos que ESTE cliente hizo hacia otros restaurantes de la plaza: recibo aparte por cada uno.
+  const gruposPlaza = await obtenerGruposPlazaMesa(mesaId, clienteId);
   const overlay = abrirModal(`
     <div class="modal-head"><h3>Liquidar a ${cliente.nombre}</h3><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button></div>
     <p class="modal-sub">Cobra su consumo y libéralo de la mesa. El resto de la mesa sigue activa.</p>
     <div id="liqClienteDetalle"></div>
+    ${Object.keys(gruposPlaza).length ? `<h4 style="margin-top:14px;font-size:13px;color:var(--muted);text-transform:uppercase">Pedidos a otros restaurantes de la plaza</h4><div id="liqClientePlaza"></div>` : ''}
     <label class="field">Propina (opcional)</label>
     <div class="propina-row" id="propinaRowCliente">
       <button class="btn btn-brand" data-prop="0">Sin propina</button>
@@ -1944,6 +2060,7 @@ window.abrirLiquidarCliente = function(mesaId, clienteId){
       <button class="btn btn-danger" id="btnConfirmarLiquidarCliente">Confirmar y retirar</button>
     </div>
   `, {wide:true});
+  const zonaPlaza = overlay.querySelector('#liqClientePlaza');
   function pintarDetalle(){
     const items = (state.pedidosPorMesa[mesaId]||[]).filter(i=>i.cliente_id===clienteId);
     const t = calcularTotales(subtotal, propinaPct);
@@ -1952,8 +2069,21 @@ window.abrirLiquidarCliente = function(mesaId, clienteId){
       <div class="impuesto-line"><span>Subtotal</span><span>${money(t.subtotal)}</span></div>
       ${t.lineasImpuestos.map(l=>`<div class="impuesto-line"><span>${l.nombre} (${l.porcentaje}%)</span><span>${money(l.valor)}</span></div>`).join('')}
       ${t.propinaPct>0 ? `<div class="impuesto-line"><span>Propina (${t.propinaPct}%)</span><span>${money(t.propina)}</span></div>` : ''}
-      <div class="total-row"><span>Total a pagar</span><span>${money(t.total)}</span></div>
+      <div class="total-row"><span>Total a pagar (${state.restaurante.nombre})</span><span>${money(t.total)}</span></div>
     `;
+    if(zonaPlaza){
+      zonaPlaza.innerHTML = Object.keys(gruposPlaza).map(restId=>{
+        const g = gruposPlaza[restId];
+        const tg = calcularTotalesConImpuestos(g.subtotal, state.impuestosPorRestaurante[restId], propinaPct);
+        return `<div class="linea-item"><span>🍽️ ${g.nombre}</span><span style="display:flex;gap:10px;align-items:center">${money(tg.total)} <button class="btn btn-sm" data-imprimir-plaza-cliente="${restId}">🖨️ Imprimir</button></span></div>`;
+      }).join('');
+      zonaPlaza.querySelectorAll('[data-imprimir-plaza-cliente]').forEach(btn=>{
+        btn.addEventListener('click', ()=>{
+          const restId = btn.getAttribute('data-imprimir-plaza-cliente');
+          imprimirTicketPlaza(restId, gruposPlaza[restId], mesa, propinaPct);
+        });
+      });
+    }
   }
   overlay.querySelectorAll('#propinaRowCliente [data-prop]').forEach(b=> b.addEventListener('click', function(){
     overlay.querySelectorAll('#propinaRowCliente [data-prop]').forEach(x=>x.classList.remove('btn-brand'));
@@ -1966,12 +2096,12 @@ window.abrirLiquidarCliente = function(mesaId, clienteId){
     imprimirTicket(mesa, cliente, mesaId, calcularTotales(subtotal, propinaPct));
   });
   overlay.querySelector('#btnConfirmarLiquidarCliente').addEventListener('click', async ()=>{
-    await liquidarClienteIndividual(mesaId, cliente, propinaPct);
+    await liquidarClienteIndividual(mesaId, cliente, propinaPct, gruposPlaza);
     cerrarModal(overlay);
   });
 }
 
-async function liquidarClienteIndividual(mesaId, cliente, propinaPct){
+async function liquidarClienteIndividual(mesaId, cliente, propinaPct, gruposPlaza){
   const mesa = state.mesas.find(m=>m.id===mesaId);
   const items = (state.pedidosPorMesa[mesaId]||[]).filter(i=>i.cliente_id===cliente.id);
   const t = calcularTotales(totalesCliente(mesaId, cliente.id), propinaPct);
@@ -1981,6 +2111,21 @@ async function liquidarClienteIndividual(mesaId, cliente, propinaPct){
     cliente_nombre: cliente.nombre, subtotal: t.subtotal, impuestos: t.totalImpuestos, propina: t.propina, total: t.total,
     items: items
   });
+
+  // liquidar aparte cada pedido que este cliente hizo hacia otros restaurantes de la plaza
+  if(gruposPlaza && Object.keys(gruposPlaza).length){
+    for(const restId of Object.keys(gruposPlaza)){
+      const g = gruposPlaza[restId];
+      const tg = calcularTotalesConImpuestos(g.subtotal, state.impuestosPorRestaurante[restId], propinaPct);
+      await supa.from('clientes_liquidados').insert({
+        mesa_nombre: mesa.nombre + ' (plaza)', restaurante_id: restId, mesero_id: mesa.mesero_id,
+        cliente_nombre: cliente.nombre, subtotal: tg.subtotal, impuestos: tg.totalImpuestos, propina: tg.propina, total: tg.total,
+        items: g.items
+      });
+    }
+    await cerrarGruposPlaza(mesaId, gruposPlaza);
+  }
+
   await supa.from('pedidos_items').delete().eq('cliente_id', cliente.id);
   await supa.from('sillas').update({cliente_id:null}).eq('id', cliente.silla_id);
   await supa.from('clientes').delete().eq('id', cliente.id);
@@ -2183,7 +2328,7 @@ async function renderTab(tab){
     const totalGeneral = (liq||[]).reduce((s,l)=>s+Number(l.total),0);
     const porMesero = {};
     (liq||[]).forEach(l=>{ const key=l.mesero_id||'—'; porMesero[key]=(porMesero[key]||0)+Number(l.total); });
-    const meseros = await supa.from('meseros').select('*').eq('restaurante_id', state.restaurante.id);
+    const meseros = await supa.from('meseros').select('*'); // meseros son de toda la plaza, no de un solo restaurante
     const nombreMesero = id => (meseros.data||[]).find(m=>m.id===id)?.nombre || 'Sin mesero';
     el.innerHTML = `
       <div class="kpi-row">
@@ -2202,7 +2347,7 @@ async function renderTab(tab){
   }
   if(tab==='cruce'){
     const { data: liq } = await supa.from('mesas_liquidadas').select('*').eq('restaurante_id', state.restaurante.id).order('liquidada_en',{ascending:false});
-    const { data: ms } = await supa.from('meseros').select('*').eq('restaurante_id', state.restaurante.id).order('nombre');
+    const { data: ms } = await supa.from('meseros').select('*').order('nombre'); // meseros de toda la plaza
     state._cruceLiq = liq || [];
     state._cruceMeseros = ms || [];
     el.innerHTML = `
@@ -2279,8 +2424,9 @@ async function renderTab(tab){
     document.getElementById('btnBuscarBt').addEventListener('click', buscarImpresoraBluetooth);
   }
   if(tab==='meseros'){
-    const { data: ms } = await supa.from('meseros').select('*').eq('restaurante_id', state.restaurante.id).order('nombre');
+    const { data: ms } = await supa.from('meseros').select('*').order('nombre'); // meseros compartidos por toda la plaza
     el.innerHTML = `<div class="row-between"><h4>Meseros</h4><button class="btn btn-sm btn-brand" id="btnNuevoMesero">+ Nuevo mesero</button></div>
+      <p class="modal-sub" style="margin-bottom:10px">Los meseros son compartidos por toda la plaza: no pertenecen a un restaurante en particular y pueden atender mesas y tomar pedidos para cualquiera de los restaurantes.</p>
       <table class="data-table"><thead><tr><th>Nombre</th><th>PIN</th><th>Activo</th><th></th></tr></thead><tbody>
       ${(ms||[]).map(m=>`<tr><td>${m.nombre}</td><td>${m.pin}</td><td>${m.activo?'Sí':'No'}</td><td><button class="btn btn-sm" data-editar-mesero="${m.id}">✏️</button></td></tr>`).join('')}
       </tbody></table>`;
@@ -2295,16 +2441,19 @@ async function renderTab(tab){
     document.getElementById('btnNuevoImpuesto').addEventListener('click', ()=> formularioImpuesto(null));
   }
   if(tab==='config'){
-    el.innerHTML = `<h4>Cambiar contraseña de administrador</h4>
+    el.innerHTML = `<h4>Cambiar contraseña de administrador de ${state.restaurante.nombre}</h4>
+      <p class="modal-sub" style="margin-bottom:10px">Esta contraseña es exclusiva de este restaurante. Cada restaurante tiene su propio admin y su propia contraseña.</p>
       <label class="field">Contraseña actual</label><input class="input" id="cfgActual" type="password">
       <label class="field">Nueva contraseña</label><input class="input" id="cfgNueva" type="password">
       <button class="btn btn-brand" style="margin-top:14px" id="btnCambiarPass">Guardar nueva contraseña</button>`;
     document.getElementById('btnCambiarPass').addEventListener('click', async ()=>{
-      if(document.getElementById('cfgActual').value !== state.adminPassword){ toast('Contraseña actual incorrecta','err'); return; }
+      if(document.getElementById('cfgActual').value !== passwordAdminRestaurante(state.restaurante)){ toast('Contraseña actual incorrecta','err'); return; }
       const nueva = document.getElementById('cfgNueva').value.trim();
       if(!nueva){ toast('Escribe la nueva contraseña','err'); return; }
-      await supa.from('config_admin').update({password:nueva}).eq('id',1);
-      state.adminPassword = nueva;
+      await supa.from('restaurantes').update({password:nueva}).eq('id', state.restaurante.id);
+      state.restaurante.password = nueva;
+      const idx = state.restaurantes.findIndex(r=>r.id===state.restaurante.id);
+      if(idx>-1) state.restaurantes[idx].password = nueva;
       toast('Contraseña actualizada');
     });
   }
@@ -2768,7 +2917,7 @@ function formularioMesero(id, listaActual){
     <button class="btn btn-brand btn-block" style="margin-top:16px" id="mfGuardar">Guardar</button>
   `);
   document.getElementById('mfGuardar').addEventListener('click', async ()=>{
-    const payload = { nombre: document.getElementById('mfNombre').value.trim(), pin: document.getElementById('mfPin').value.trim(), activo: document.getElementById('mfActivo').value==='true', restaurante_id: state.restaurante.id };
+    const payload = { nombre: document.getElementById('mfNombre').value.trim(), pin: document.getElementById('mfPin').value.trim(), activo: document.getElementById('mfActivo').value==='true' };
     if(m) await supa.from('meseros').update(payload).eq('id', m.id);
     else await supa.from('meseros').insert(payload);
     cerrarModal(overlay);
@@ -2782,14 +2931,21 @@ function formularioRestaurante(id, esSuper){
     <div class="modal-head"><h3>${r?'Editar':'Nuevo'} restaurante</h3><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button></div>
     <label class="field">Nombre</label><input class="input" id="rfNombre" value="${r?r.nombre:''}">
     <label class="field">Subdominio</label><input class="input" id="rfSub" value="${r?r.subdominio:''}" placeholder="ej: pizzeria">
+    <label class="field">Contraseña del admin de este restaurante</label><input class="input" id="rfPassword" value="${r&&r.password?r.password:'0000'}" placeholder="Contraseña del admin">
+    <p class="modal-sub">Cada restaurante tiene su propio admin y su propia contraseña, distinta a la de los demás.</p>
     <button class="btn btn-brand btn-block" style="margin-top:16px" id="rfGuardar">Guardar</button>
   `);
   document.getElementById('rfGuardar').addEventListener('click', async ()=>{
-    const payload = { nombre: document.getElementById('rfNombre').value.trim(), subdominio: document.getElementById('rfSub').value.trim().toLowerCase() };
+    const payload = {
+      nombre: document.getElementById('rfNombre').value.trim(),
+      subdominio: document.getElementById('rfSub').value.trim().toLowerCase(),
+      password: document.getElementById('rfPassword').value.trim() || '0000'
+    };
     if(r) await supa.from('restaurantes').update(payload).eq('id', r.id);
     else await supa.from('restaurantes').insert(payload);
     const { data: rests } = await supa.from('restaurantes').select('*').order('nombre');
     state.restaurantes = rests || [];
+    if(state.restaurante && r && state.restaurante.id===r.id) state.restaurante.password = payload.password;
     cerrarModal(overlay);
     if(esSuper) renderTabSuper('restaurantes'); else renderTab('restaurantes');
     toast('Restaurante guardado');
@@ -2832,8 +2988,8 @@ async function renderTabSuper(tab){
     const { data: rests } = await supa.from('restaurantes').select('*').order('nombre');
     state.restaurantes = rests || [];
     el.innerHTML = `<div class="row-between"><h4>Restaurantes / subdominios</h4><button class="btn btn-sm btn-brand" id="btnNuevoRestSuper">+ Nuevo restaurante</button></div>
-      <table class="data-table"><thead><tr><th>Nombre</th><th>Subdominio</th><th></th></tr></thead><tbody>
-      ${state.restaurantes.map(r=>`<tr><td>${r.nombre}</td><td>${r.subdominio}.tudominio.com</td><td><button class="btn btn-sm" data-editar-rest-super="${r.id}">✏️</button></td></tr>`).join('')}
+      <table class="data-table"><thead><tr><th>Nombre</th><th>Subdominio</th><th>Contraseña admin</th><th></th></tr></thead><tbody>
+      ${state.restaurantes.map(r=>`<tr><td>${r.nombre}</td><td>${r.subdominio}.tudominio.com</td><td>${r.password||'0000'}</td><td><button class="btn btn-sm" data-editar-rest-super="${r.id}">✏️</button></td></tr>`).join('')}
       </tbody></table>`;
     document.getElementById('btnNuevoRestSuper').addEventListener('click', ()=> formularioRestaurante(null, true));
     el.querySelectorAll('[data-editar-rest-super]').forEach(b=> b.addEventListener('click', ()=> formularioRestaurante(b.getAttribute('data-editar-rest-super'), true)));
