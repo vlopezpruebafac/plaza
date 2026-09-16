@@ -262,6 +262,13 @@ table.data-table tr:last-child td{border-bottom:none;}
 }
 .actions-bar .btn{flex:1 1 130px; max-width:220px; padding:13px 14px;}
 
+/* Pedidos por restaurante (plaza) */
+.rest-pedido-head{margin-top:14px; margin-bottom:2px; font-size:11.5px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; color:var(--brand);}
+.rest-chips{display:flex; flex-wrap:wrap; gap:6px; margin-top:12px;}
+.rest-chip{display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:100px; border:1px solid var(--line); background:var(--panel-2); font-size:12px; font-weight:600;}
+.rest-cierre{border:1px solid var(--line); border-radius:var(--radius); padding:6px 12px 10px; margin-bottom:10px; background:var(--panel-2);}
+.rest-cierre .linea-item:last-child{border-bottom:none;}
+
 /* Responsive */
 @media (max-width:640px){
   .modal{width:100%;}
@@ -296,10 +303,7 @@ table.data-table tr:last-child td{border-bottom:none;}
   <div class="card login-card">
     <div class="plaza-tag">PLAZA CASHLESS</div>
     <h1 id="loginRestName">Cargando…</h1>
-    <div id="restSelectorWrap" class="hidden">
-      <label class="field" style="text-align:left">Restaurante (modo prueba, sin subdominio)</label>
-      <select id="restSelector" class="input"></select>
-    </div>
+    <p class="modal-sub" style="margin:2px 0 4px">Los meseros entran directo, sin restaurante asignado. El restaurante solo se le pide al administrador.</p>
     <div class="role-btns">
       <button class="btn btn-brand" id="btnSoyMesero">Soy mesero / cobrador</button>
       <button class="btn" id="btnSoyAdmin">Soy administrador</button>
@@ -452,18 +456,23 @@ window.NFC_BRIDGE_URL = 'ws://127.0.0.1:4000';
    ============================================================= */
 const state = {
   restaurantes: [],
-  restaurante: null,       // restaurante actual (según subdominio o selector)
+  restaurante: null,       // restaurante del ADMIN (el mesero no tiene: trabaja para toda la plaza)
+  restauranteSubdominio: null, // restaurante sugerido por el subdominio (solo para el acceso admin)
   mesero: null,            // mesero autenticado (o null si admin)
   esAdmin: false,
   esSuperAdmin: false,
+  esPlaza: false,          // true cuando se entra como mesero (sin restaurante asignado)
   adminPassword: '0000',
   superadminPassword: 'admin123',
   mesas: [],               // cache de mesas del restaurante
   sillasPorMesa: {},       // mesaId -> [sillas]
   clientesPorMesa: {},     // mesaId -> [clientes]
   pedidosPorMesa: {},      // mesaId -> [items]
-  productos: [],
-  impuestos: [],           // impuestos activos del restaurante
+  productos: [],           // productos visibles en el listado de inventario
+  productosPlaza: [],      // TODOS los productos activos de la plaza
+  productosPorRestaurante: {}, // restauranteId -> [productos]
+  impuestos: [],           // impuestos activos del restaurante del admin
+  impuestosPorRestaurante: {}, // restauranteId -> [impuestos]
   meseros: [],
   meshesPorMesa: {},       // mesaId -> THREE.Group
   mesaSeleccionadaId: null,
@@ -521,49 +530,61 @@ async function iniciar(){
   if(error){ toast('No se pudo conectar a Supabase. Revisa SUPABASE_URL / ANON_KEY.', 'err'); console.error(error); return; }
   state.restaurantes = rests || [];
 
+  // El subdominio ya NO encierra la app en un restaurante: el mesero entra
+  // libre (atiende toda la plaza) y el restaurante solo se le pregunta al
+  // administrador. El subdominio queda como sugerencia para ese acceso.
   const host = window.location.hostname;
   const partes = host.split('.');
   let slug = null;
   if(partes.length > 2 && partes[0] !== 'www') slug = partes[0];
+  state.restauranteSubdominio = state.restaurantes.find(r => r.subdominio === slug) || null;
 
-  let rest = state.restaurantes.find(r => r.subdominio === slug);
+  state.restaurante = null;
+  document.getElementById('loginRestName').textContent = state.restaurantes.length
+    ? (state.restauranteSubdominio ? state.restauranteSubdominio.nombre : 'Plaza Cashless')
+    : 'No hay restaurantes configurados';
 
-  const selWrap = document.getElementById('restSelectorWrap');
-  const sel = document.getElementById('restSelector');
-  sel.innerHTML = state.restaurantes.map(r=>`<option value="${r.id}">${r.nombre}</option>`).join('');
-
-  if(!rest){
-    selWrap.classList.remove('hidden');
-    rest = state.restaurantes[0];
-    sel.addEventListener('change', ()=>{
-      state.restaurante = state.restaurantes.find(r=>r.id===sel.value);
-      document.getElementById('loginRestName').textContent = state.restaurante ? state.restaurante.nombre : 'Plaza Cashless';
-      state.adminPassword = state.restaurante ? (state.restaurante.admin_password || '0000') : '0000';
-    });
-  }
-  state.restaurante = rest || null;
-  document.getElementById('loginRestName').textContent = rest ? rest.nombre : 'No hay restaurantes configurados';
-  // cada restaurante tiene su propia contraseña de admin (columna admin_password)
-  state.adminPassword = state.restaurante ? (state.restaurante.admin_password || '0000') : '0000';
-
-  // cargar contraseña de superadmin (esta sí es global, no depende del restaurante)
+  // contraseña de superadmin (global, no depende del restaurante)
   const { data: cfg } = await supa.from('config_admin').select('*').eq('id',1).single();
   if(cfg && cfg.superadmin_password){
     state.superadminPassword = cfg.superadmin_password;
   }
 }
 
+// Restaurante "dueño" de los elementos compartidos de la plaza (las mesas).
+function restauranteBaseId(){
+  if(state.restaurante) return state.restaurante.id;
+  if(state.restauranteSubdominio) return state.restauranteSubdominio.id;
+  return state.restaurantes.length ? state.restaurantes[0].id : null;
+}
+function nombreRestaurante(id){
+  const r = (state.restaurantes||[]).find(x=>x.id===id);
+  return r ? r.nombre : 'Sin restaurante';
+}
+
 /* =============================================================
    IMPUESTOS Y TOTALES (subtotal + impuestos + propina opcional)
    ============================================================= */
 async function cargarImpuestos(){
-  if(!state.restaurante) { state.impuestos = []; return; }
-  const { data } = await supa.from('impuestos').select('*').eq('restaurante_id', state.restaurante.id).eq('activo', true).order('nombre');
-  state.impuestos = data || [];
+  // Los impuestos son de cada restaurante. Como una misma mesa puede tener
+  // pedidos de VARIOS restaurantes de la plaza, se cargan todos y se agrupan
+  // por restaurante para calcular cada ticket con los impuestos que le tocan.
+  const { data } = await supa.from('impuestos').select('*').eq('activo', true).order('nombre');
+  const todos = data || [];
+  state.impuestosPorRestaurante = {};
+  todos.forEach(imp=>{
+    const k = imp.restaurante_id;
+    (state.impuestosPorRestaurante[k] = state.impuestosPorRestaurante[k] || []).push(imp);
+  });
+  state.impuestos = state.restaurante ? (state.impuestosPorRestaurante[state.restaurante.id] || []) : [];
 }
-function calcularTotales(subtotal, propinaPct=0){
+function impuestosDe(restauranteId){
+  if(restauranteId) return (state.impuestosPorRestaurante||{})[restauranteId] || [];
+  return state.impuestos || [];
+}
+function calcularTotales(subtotal, propinaPct=0, restauranteId=null){
   subtotal = Number(subtotal)||0;
-  const lineasImpuestos = state.impuestos.map(imp=>({
+  const lineasImpuestos = impuestosDe(restauranteId).map(imp=>({
     nombre: imp.nombre,
     porcentaje: Number(imp.porcentaje),
     valor: subtotal * (Number(imp.porcentaje)/100)
@@ -574,9 +595,34 @@ function calcularTotales(subtotal, propinaPct=0){
   return { subtotal, lineasImpuestos, totalImpuestos, propinaPct:Number(propinaPct||0), propina, total };
 }
 
+/* Agrupa el pedido de una mesa (o de un cliente) por restaurante de la plaza.
+   Es la base de todo: productos, cuenta, tickets y liquidación. */
+function restaurantesConPedido(mesaId, clienteId){
+  const items = (state.pedidosPorMesa[mesaId]||[]).filter(i=> !clienteId || i.cliente_id===clienteId);
+  const mapa = {};
+  items.forEach(i=>{
+    const key = i.restaurante_id || '__sin__';
+    if(!mapa[key]){
+      mapa[key] = {
+        restauranteId: i.restaurante_id || null,
+        nombre: i.restaurante_id ? nombreRestaurante(i.restaurante_id) : 'Sin restaurante',
+        items: [], subtotal: 0
+      };
+    }
+    mapa[key].items.push(i);
+    mapa[key].subtotal += Number(i.precio_unitario)*i.cantidad;
+  });
+  return Object.values(mapa).sort((a,b)=> a.nombre.localeCompare(b.nombre));
+}
+function totalMesaConImpuestos(mesaId, propinaPct){
+  return restaurantesConPedido(mesaId).reduce((s,g)=> s + calcularTotales(g.subtotal, propinaPct, g.restauranteId).total, 0);
+}
+
 document.getElementById('btnSoyMesero').addEventListener('click', async ()=>{
-  if(!state.restaurante){ toast('Selecciona un restaurante', 'err'); return; }
-  const { data: meseros } = await supa.from('meseros').select('*').eq('restaurante_id', state.restaurante.id).eq('activo', true).order('nombre');
+  // LOGEO LIBRE: el mesero no pertenece a un restaurante, se listan todos los
+  // meseros activos de la plaza.
+  if(!state.restaurantes.length){ toast('No hay restaurantes configurados en la plaza', 'err'); return; }
+  const { data: meseros } = await supa.from('meseros').select('*').eq('activo', true).order('nombre');
   state.meseros = meseros || [];
   const grid = document.getElementById('meseroGrid');
   grid.innerHTML = state.meseros.map(m => `
@@ -601,7 +647,9 @@ window.verificarPin = function(id, btn){
   const pin = document.getElementById('pinInput').value;
   const m = state.meseros.find(x=>x.id===id);
   if(pin === m.pin){
-    state.mesero = m; state.esAdmin = false;
+    state.mesero = m; state.esAdmin = false; state.esSuperAdmin = false;
+    state.esPlaza = true;          // atiende toda la plaza
+    state.restaurante = null;      // sin restaurante asignado
     cerrarTodosModales();
     entrarAlMapa();
   } else {
@@ -610,24 +658,35 @@ window.verificarPin = function(id, btn){
 }
 
 document.getElementById('btnSoyAdmin').addEventListener('click', ()=>{
-  const overlay = abrirModal(`
+  // Al ADMINISTRADOR sí se le pregunta a qué restaurante va a ingresar.
+  if(!state.restaurantes.length){ toast('No hay restaurantes configurados', 'err'); return; }
+  const preseleccionado = state.restauranteSubdominio ? state.restauranteSubdominio.id : state.restaurantes[0].id;
+  abrirModal(`
     <div class="modal-head"><h3>Acceso administrador</h3><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button></div>
-    <input class="input" id="adminPassInput" type="password" placeholder="Contraseña" style="margin-top:14px;text-align:center;letter-spacing:.3em;font-size:20px">
-    <button class="btn btn-brand btn-block" style="margin-top:14px" onclick="entrarAdmin(this)">Entrar</button>
+    <p class="modal-sub">¿A qué restaurante vas a ingresar?</p>
+    <label class="field">Restaurante</label>
+    <select class="input" id="adminRestSelect">
+      ${state.restaurantes.map(r=>`<option value="${r.id}" ${r.id===preseleccionado?'selected':''}>${r.nombre}</option>`).join('')}
+    </select>
+    <label class="field">Contraseña</label>
+    <input class="input" id="adminPassInput" type="password" placeholder="Contraseña" style="text-align:center;letter-spacing:.3em;font-size:20px">
+    <button class="btn btn-brand btn-block" style="margin-top:16px" onclick="entrarAdmin(this)">Entrar</button>
   `);
 });
 window.entrarAdmin = async function(){
+  const restId = document.getElementById('adminRestSelect').value;
+  const rest = state.restaurantes.find(r=>r.id===restId);
+  if(!rest){ toast('Selecciona un restaurante','err'); return; }
   const pass = document.getElementById('adminPassInput').value;
-  if(pass === state.adminPassword){
-    state.esAdmin = true; state.mesero = null; state.esSuperAdmin = false;
-    cerrarTodosModales();
-    document.getElementById('adminRestName').textContent = state.restaurante.nombre;
-    await cargarImpuestos();
-    await renderTab('reportes');
-    showOnly('screen-admin');
-  } else {
-    toast('Contraseña incorrecta', 'err');
-  }
+  if(pass !== (rest.admin_password || '0000')){ toast('Contraseña incorrecta', 'err'); return; }
+  state.restaurante = rest;
+  state.adminPassword = rest.admin_password || '0000';
+  state.esAdmin = true; state.mesero = null; state.esSuperAdmin = false; state.esPlaza = false;
+  cerrarTodosModales();
+  document.getElementById('adminRestName').textContent = rest.nombre;
+  await cargarProductos();
+  await renderTab('reportes');
+  showOnly('screen-admin');
 }
 
 window.volverLogin = function(){ showOnly('screen-login'); }
@@ -662,16 +721,22 @@ document.querySelectorAll('#screen-superadmin .tabs-row [data-stab]').forEach(b=
    AUTORIZACIÓN ADMIN PARA ACCIONES PROTEGIDAS
    (mover una mesa ya existente, editar productos/valores)
    ============================================================= */
+function passwordAdminValida(pass){
+  if(!pass) return false;
+  if(pass === state.superadminPassword) return true;
+  if(state.restaurante && pass === (state.restaurante.admin_password || state.adminPassword || '0000')) return true;
+  // El mesero trabaja para toda la plaza: sirve la clave de cualquier admin.
+  return (state.restaurantes||[]).some(r => pass === (r.admin_password || '0000'));
+}
 function pedirAutorizacionAdmin(callback){
   const overlay = abrirModal(`
     <div class="modal-head"><h3>🔒 Autorización requerida</h3><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button></div>
-    <p class="modal-sub">Esta acción modifica datos ya guardados. Ingresa la contraseña de admin.</p>
+    <p class="modal-sub">Esta acción modifica datos ya guardados. Ingresa la contraseña de un administrador de la plaza.</p>
     <input class="input" id="authPassInput" type="password" placeholder="Contraseña admin" style="margin-top:14px;text-align:center;letter-spacing:.3em;font-size:20px">
     <button class="btn btn-brand btn-block" style="margin-top:14px" id="authConfirmBtn">Autorizar</button>
   `);
   document.getElementById('authConfirmBtn').addEventListener('click', ()=>{
-    const val = document.getElementById('authPassInput').value;
-    if(val === state.adminPassword){
+    if(passwordAdminValida(document.getElementById('authPassInput').value)){
       cerrarModal(overlay);
       callback();
     } else {
@@ -684,7 +749,7 @@ function pedirAutorizacionAdmin(callback){
    ENTRAR AL MAPA (mesero)
    ============================================================= */
 async function entrarAlMapa(){
-  document.getElementById('topRestName').textContent = state.restaurante.nombre;
+  document.getElementById('topRestName').textContent = 'Plaza de restaurantes';
   document.getElementById('topWho').textContent = 'Mesero: ' + state.mesero.nombre;
   document.getElementById('btnDashboardAdmin').classList.add('hidden');
   showOnly('screen-mapa');
@@ -695,12 +760,12 @@ async function entrarAlMapa(){
   suscribirRealtime();
 }
 
-document.getElementById('btnSalirMapa').addEventListener('click', ()=>{ state.mesero=null; state.esAdmin=false; showOnly('screen-login'); });
-document.getElementById('btnSalirAdmin').addEventListener('click', ()=>{ state.esAdmin=false; showOnly('screen-login'); });
+document.getElementById('btnSalirMapa').addEventListener('click', ()=>{ state.mesero=null; state.esAdmin=false; state.esPlaza=false; showOnly('screen-login'); });
+document.getElementById('btnSalirAdmin').addEventListener('click', ()=>{ state.esAdmin=false; state.restaurante=null; showOnly('screen-login'); });
 document.getElementById('btnVerMapaAdmin').addEventListener('click', async ()=>{
   state.mesero = null;
-  document.getElementById('topRestName').textContent = state.restaurante.nombre;
-  document.getElementById('topWho').textContent = 'Administrador';
+  document.getElementById('topRestName').textContent = 'Plaza de restaurantes';
+  document.getElementById('topWho').textContent = 'Administrador · ' + state.restaurante.nombre;
   document.getElementById('btnDashboardAdmin').classList.remove('hidden');
   showOnly('screen-mapa');
   await cargarProductos(); await cargarMesas();
@@ -721,12 +786,25 @@ document.getElementById('btnVolverMapa').addEventListener('click', ()=> showOnly
    CARGA DE DATOS
    ============================================================= */
 async function cargarProductos(){
-  const { data } = await supa.from('productos').select('*').eq('restaurante_id', state.restaurante.id).eq('activo', true).order('categoria');
-  state.productos = data || [];
+  // Se cargan los productos de TODA la plaza, agrupados por restaurante, para
+  // que el mesero pueda cargarle el pedido a cualquiera de ellos. El listado
+  // de inventario del admin sigue viendo solo los suyos.
+  const { data } = await supa.from('productos').select('*').eq('activo', true).order('categoria');
+  state.productosPlaza = data || [];
+  state.productosPorRestaurante = {};
+  state.productosPlaza.forEach(p=>{
+    const k = p.restaurante_id;
+    (state.productosPorRestaurante[k] = state.productosPorRestaurante[k] || []).push(p);
+  });
+  state.productos = (state.esAdmin && state.restaurante)
+    ? state.productosPlaza.filter(p=>p.restaurante_id === state.restaurante.id)
+    : state.productosPlaza;
   await cargarImpuestos();
 }
 async function cargarMesas(){
-  const { data: mesas } = await supa.from('mesas').select('*').eq('restaurante_id', state.restaurante.id);
+  // El mapa es el de la PLAZA: las mesas son compartidas por todos los
+  // restaurantes, así que ya no se filtran por restaurante.
+  const { data: mesas } = await supa.from('mesas').select('*');
   state.mesas = mesas || [];
   for(const m of state.mesas){
     const { data: sillas } = await supa.from('sillas').select('*').eq('mesa_id', m.id).order('angulo');
@@ -759,7 +837,7 @@ function suscribirRealtime(){
   if(state.canalRealtime) return;
   state.canalRealtime = supa.channel('plaza-cambios')
     .on('postgres_changes', {event:'*', schema:'public', table:'mesas'}, payload=>{
-      if(payload.new && payload.new.restaurante_id !== state.restaurante.id) return;
+      // el mapa es de toda la plaza: ya no se filtra por restaurante
       recargarMesa(payload.new ? payload.new.id : payload.old.id);
     })
     .on('postgres_changes', {event:'*', schema:'public', table:'sillas'}, payload=>{
@@ -1012,7 +1090,7 @@ async function crearMesaEnPosicion(x,z){
   const nombre = state.colocandoNombrePendiente;
   state.modo = null; state.colocandoNombrePendiente=null; hide('modeBanner');
   const { data, error } = await supa.from('mesas').insert({
-    restaurante_id: state.restaurante.id, nombre, pos_x:x, pos_z:z, estado:'libre'
+    restaurante_id: restauranteBaseId(), nombre, pos_x:x, pos_z:z, estado:'libre'
   }).select().single();
   if(error){ toast('No se pudo crear la mesa','err'); console.error(error); return; }
   state.mesas.push(data);
@@ -1102,6 +1180,11 @@ function renderModalMesaOcupada(mesaId, overlayExistente){
   const sillas = state.sillasPorMesa[mesaId]||[];
   const clientes = state.clientesPorMesa[mesaId]||[];
   const total = totalMesa(mesaId);
+  const gruposRest = restaurantesConPedido(mesaId);
+  const chipsRest = gruposRest.length
+    ? `<h4 style="margin-top:16px;font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.03em">Restaurantes con pedido</h4>
+       <div class="rest-chips">${gruposRest.map(g=>`<span class="rest-chip">${g.nombre} · ${money(g.subtotal)}</span>`).join('')}</div>`
+    : '';
   const html = `
     <div class="modal-head"><h3>${mesa.nombre}</h3><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button></div>
     <span class="badge badge-ocupada"><span class="badge-dot"></span>Ocupada · ${mesa.num_clientes} clientes · ${mesa.cuentas_separadas?'cuentas separadas':'cuenta única'}</span>
@@ -1109,6 +1192,8 @@ function renderModalMesaOcupada(mesaId, overlayExistente){
     <h4 style="margin-top:16px;font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.03em">Sillas</h4>
     <div class="sillas-grid" id="sillasGridModal"></div>
     <button class="btn btn-sm" id="btnAgregarSilla" style="margin-top:10px">+ Agregar silla</button>
+
+    ${chipsRest}
 
     <div class="total-row"><span>Total mesa</span><span>${money(total)}</span></div>
 
@@ -1407,19 +1492,26 @@ window.abrirTomarPedido = function(mesaId, clientePreseleccionado){
   if(clientes.length === 0){ toast('Primero asigna al menos un cliente a una silla','err'); return; }
 
   let clienteActivo = clientePreseleccionado || null;
+  let restauranteActivo = null;   // restaurante al que se le carga este pedido
+
   const overlay = abrirModal(`
     <div class="modal-head"><h3>Tomar pedido</h3><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button></div>
     <div id="pedidoCuentaSelector"></div>
     <div id="pedidoScanZone"></div>
     <div id="pedidoFormZone" class="hidden">
-      <label class="field">Producto</label>
-      <select class="input" id="prodSelect"></select>
-      <label class="field">Cantidad</label>
-      <input class="input" id="cantInput" type="number" min="1" value="1">
-      <div style="display:flex;justify-content:space-between;margin-top:10px;font-size:13.5px;color:var(--muted)">
-        <span>Precio unitario</span><span id="precioUnitLbl">$0</span>
+      <label class="field">Restaurante al que se le carga el pedido</label>
+      <select class="input" id="restPedidoSelect"></select>
+      <p id="pedidoSinRest" class="modal-sub" style="margin-top:8px">Selecciona el restaurante para ver sus productos.</p>
+      <div id="pedidoProdZone" class="hidden">
+        <label class="field">Producto</label>
+        <select class="input" id="prodSelect"></select>
+        <label class="field">Cantidad</label>
+        <input class="input" id="cantInput" type="number" min="1" value="1">
+        <div style="display:flex;justify-content:space-between;margin-top:10px;font-size:13.5px;color:var(--muted)">
+          <span>Precio unitario</span><span id="precioUnitLbl">$0</span>
+        </div>
+        <button class="btn btn-brand btn-block" style="margin-top:12px" id="btnAgregarItem">+ Agregar al pedido</button>
       </div>
-      <button class="btn btn-brand btn-block" style="margin-top:12px" id="btnAgregarItem">+ Agregar al pedido</button>
     </div>
     <h4 style="margin-top:18px;font-size:13px;color:var(--muted);text-transform:uppercase">Pedido actual</h4>
     <div id="listaItemsCliente"></div>
@@ -1453,49 +1545,91 @@ window.abrirTomarPedido = function(mesaId, clientePreseleccionado){
       overlay.querySelector('#pedidoFormZone').classList.add('hidden');
     } else {
       zone.innerHTML = `<div class="check-anim pop" style="margin-top:10px"><svg viewBox="0 0 24 24"><path d="M4 12l5 5 11-11"/></svg></div><div style="text-align:center;margin-top:6px;font-weight:700;color:var(--libre)">Cargando a: ${cliente.nombre}</div>`;
+      // Ya identificado el cliente (pulsera o pestaña), se despliega la casilla
+      // con los restaurantes de la plaza.
       overlay.querySelector('#pedidoFormZone').classList.remove('hidden');
     }
   }
-  function pintarSelectProductos(){
+  function pintarSelectorRestaurante(){
+    const sel = overlay.querySelector('#restPedidoSelect');
+    if(!sel) return;
+    sel.innerHTML = '<option value="">— Selecciona el restaurante —</option>' +
+      state.restaurantes.map(r=>`<option value="${r.id}" ${r.id===restauranteActivo?'selected':''}>${r.nombre}</option>`).join('');
+    sel.onchange = ()=>{ restauranteActivo = sel.value || null; pintarZonaProductos(); };
+  }
+  function pintarZonaProductos(){
+    const zona = overlay.querySelector('#pedidoProdZone');
+    const aviso = overlay.querySelector('#pedidoSinRest');
+    if(!zona || !aviso) return;
+    if(!restauranteActivo){
+      zona.classList.add('hidden');
+      aviso.textContent = 'Selecciona el restaurante para ver sus productos.';
+      aviso.classList.remove('hidden');
+      return;
+    }
+    const productos = (state.productosPorRestaurante||{})[restauranteActivo] || [];
+    if(!productos.length){
+      zona.classList.add('hidden');
+      aviso.textContent = 'Ese restaurante todavía no tiene productos cargados.';
+      aviso.classList.remove('hidden');
+      return;
+    }
+    aviso.classList.add('hidden');
+    zona.classList.remove('hidden');
+    pintarSelectProductos(productos);
+  }
+  function pintarSelectProductos(productos){
     const sel = overlay.querySelector('#prodSelect');
     if(!sel) return;
     const porCategoria = {};
-    state.productos.forEach(p=>{ (porCategoria[p.categoria]=porCategoria[p.categoria]||[]).push(p); });
+    productos.forEach(p=>{ (porCategoria[p.categoria]=porCategoria[p.categoria]||[]).push(p); });
     sel.innerHTML = Object.entries(porCategoria).map(([cat,ps])=>
       `<optgroup label="${cat}">${ps.map(p=>`<option value="${p.id}" data-precio="${p.precio}">${p.nombre} — ${money(p.precio)}</option>`).join('')}</optgroup>`
     ).join('');
     actualizarPrecioLbl();
-    sel.addEventListener('change', actualizarPrecioLbl);
+    sel.onchange = actualizarPrecioLbl;
   }
   function actualizarPrecioLbl(){
     const sel = overlay.querySelector('#prodSelect');
     const lbl = overlay.querySelector('#precioUnitLbl');
-    if(!sel || !sel.selectedOptions[0]) return;
+    if(!sel || !lbl || !sel.selectedOptions[0]) return;
     lbl.textContent = money(sel.selectedOptions[0].getAttribute('data-precio'));
   }
   function pintarListaItems(){
     const zone = overlay.querySelector('#listaItemsCliente');
     if(!clienteActivo){ zone.innerHTML = '<p style="color:var(--muted);font-size:13px">Selecciona un cliente para ver su pedido.</p>'; return; }
-    const items = (state.pedidosPorMesa[mesaId]||[]).filter(i=>i.cliente_id===clienteActivo);
-    zone.innerHTML = items.map(i=>`<div class="linea-item"><span>${i.producto_nombre} <span class="qty">x${i.cantidad}</span></span><span>${money(i.precio_unitario*i.cantidad)}</span></div>`).join('') || '<p style="color:var(--muted);font-size:13px">Sin productos aún.</p>';
-    zone.insertAdjacentHTML('beforeend', `<div class="total-row"><span>Total</span><span>${money(totalesCliente(mesaId, clienteActivo))}</span></div>`);
+    const grupos = restaurantesConPedido(mesaId, clienteActivo);
+    if(!grupos.length){ zone.innerHTML = '<p style="color:var(--muted);font-size:13px">Sin productos aún.</p>'; return; }
+    zone.innerHTML = grupos.map(g=>`
+      <div class="rest-pedido-head">${g.nombre}</div>
+      ${g.items.map(i=>`<div class="linea-item"><span>${i.producto_nombre} <span class="qty">x${i.cantidad}</span></span><span>${money(i.precio_unitario*i.cantidad)}</span></div>`).join('')}
+      <div class="impuesto-line"><span>Subtotal ${g.nombre}</span><span>${money(g.subtotal)}</span></div>
+    `).join('') + `<div class="total-row"><span>Total del cliente</span><span>${money(totalesCliente(mesaId, clienteActivo))}</span></div>`;
   }
-  function pintarTodo(){ pintarSelectorCuentas(); pintarZonaScan(); pintarSelectProductos(); pintarListaItems(); }
+  function pintarTodo(){ pintarSelectorCuentas(); pintarZonaScan(); pintarSelectorRestaurante(); pintarZonaProductos(); pintarListaItems(); }
 
   overlay.querySelector('#btnVerInventarioPedido').addEventListener('click', abrirInventario);
   pintarTodo();
 
   overlay.addEventListener('click', async (e)=>{
     if(e.target && e.target.id === 'btnAgregarItem'){
+      if(!clienteActivo){ toast('Selecciona o escanea al cliente','err'); return; }
+      if(!restauranteActivo){ toast('Selecciona el restaurante al que se le carga el pedido','err'); return; }
       const sel = overlay.querySelector('#prodSelect');
-      const opt = sel.selectedOptions[0];
+      const opt = sel ? sel.selectedOptions[0] : null;
       const cant = parseInt(overlay.querySelector('#cantInput').value)||1;
       if(!opt) return;
-      await supa.from('pedidos_items').insert({
+      const { error: errItem } = await supa.from('pedidos_items').insert({
         mesa_id:mesaId, cliente_id:clienteActivo, producto_id:opt.value,
         producto_nombre: opt.textContent.split(' — ')[0], precio_unitario: opt.getAttribute('data-precio'),
-        cantidad: cant, mesero_id: state.mesero ? state.mesero.id : null
+        cantidad: cant, mesero_id: state.mesero ? state.mesero.id : null,
+        restaurante_id: restauranteActivo
       });
+      if(errItem){
+        console.error(errItem);
+        toast('No se pudo guardar el pedido. Si falta la columna restaurante_id en pedidos_items, créala en Supabase.', 'err');
+        return;
+      }
       await recargarMesa(mesaId);
       pintarListaItems();
       const zone = overlay.querySelector('#pedidoScanZone');
@@ -1504,7 +1638,7 @@ window.abrirTomarPedido = function(mesaId, clientePreseleccionado){
       check.innerHTML = '<svg viewBox="0 0 24 24"><path d="M4 12l5 5 11-11"/></svg>';
       zone.appendChild(check);
       setTimeout(()=>check.remove(), 900);
-      toast('Producto agregado');
+      toast('Producto agregado a ' + nombreRestaurante(restauranteActivo));
     }
   });
 }
@@ -1573,37 +1707,39 @@ document.getElementById('btnEscanearPulseraAdmin').addEventListener('click', abr
 window.abrirVerCuenta = function(mesaId){
   const mesa = state.mesas.find(m=>m.id===mesaId);
   const clientes = state.clientesPorMesa[mesaId]||[];
-  let bloque = '';
-  if(mesa.cuentas_separadas){
-    bloque = clientes.map(c=>{
-      const items = (state.pedidosPorMesa[mesaId]||[]).filter(i=>i.cliente_id===c.id);
-      const t = calcularTotales(totalesCliente(mesaId,c.id));
-      return `<h4 style="margin-top:14px">${c.nombre}</h4>` +
-        items.map(i=>`<div class="linea-item"><span>${i.producto_nombre} <span class="qty">x${i.cantidad}</span></span><span>${money(i.precio_unitario*i.cantidad)}</span></div>`).join('') +
+
+  function bloqueRestaurantes(clienteId){
+    const grupos = restaurantesConPedido(mesaId, clienteId);
+    if(!grupos.length) return '<p style="color:var(--muted);font-size:13px">Sin productos registrados.</p>';
+    return grupos.map(g=>{
+      const t = calcularTotales(g.subtotal, 0, g.restauranteId);
+      return `<div class="rest-pedido-head">${g.nombre}</div>` +
+        g.items.map(i=>`<div class="linea-item"><span>${i.producto_nombre} <span class="qty">x${i.cantidad}</span></span><span>${money(i.precio_unitario*i.cantidad)}</span></div>`).join('') +
         t.lineasImpuestos.map(l=>`<div class="impuesto-line"><span>${l.nombre} (${l.porcentaje}%)</span><span>${money(l.valor)}</span></div>`).join('') +
-        `<div class="total-row"><span>Subtotal + impuestos</span><span>${money(t.total)}</span></div>`;
+        `<div class="impuesto-line" style="font-weight:700;color:var(--text)"><span>Total ${g.nombre}</span><span>${money(t.total)}</span></div>`;
     }).join('');
-  } else {
-    const items = state.pedidosPorMesa[mesaId]||[];
-    bloque = items.map(i=>`<div class="linea-item"><span>${i.producto_nombre} <span class="qty">x${i.cantidad}</span></span><span>${money(i.precio_unitario*i.cantidad)}</span></div>`).join('');
   }
-  const tMesa = calcularTotales(totalMesa(mesaId));
+
+  const bloque = mesa.cuentas_separadas
+    ? clientes.map(c=>`<h4 style="margin-top:14px">${c.nombre}</h4>${bloqueRestaurantes(c.id)}`).join('')
+    : bloqueRestaurantes(null);
+
   abrirModal(`
     <div class="modal-head"><h3>Cuenta — ${mesa.nombre}</h3><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button></div>
     ${bloque || '<p style="color:var(--muted)">Sin productos registrados.</p>'}
-    ${!mesa.cuentas_separadas ? tMesa.lineasImpuestos.map(l=>`<div class="impuesto-line"><span>${l.nombre} (${l.porcentaje}%)</span><span>${money(l.valor)}</span></div>`).join('') : ''}
-    <div class="total-row"><span>Total mesa (con impuestos)</span><span>${money(tMesa.total)}</span></div>
+    <div class="total-row"><span>Total mesa (con impuestos)</span><span>${money(totalMesaConImpuestos(mesaId, 0))}</span></div>
   `, {wide:true});
 }
 
+/* Cerrar la mesa: se listan los restaurantes que tienen pedido activo, cada
+   uno con su botón para imprimir su propio ticket de consumo. */
 window.abrirCerrarMesa = function(mesaId){
   const mesa = state.mesas.find(m=>m.id===mesaId);
   const clientes = state.clientesPorMesa[mesaId]||[];
-  const cuentas = mesa.cuentas_separadas ? clientes : [{id:'__total__', nombre:'Cuenta única'}];
   let propinaPct = 0;
   const overlay = abrirModal(`
     <div class="modal-head"><h3>Cerrar mesa — ${mesa.nombre}</h3><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button></div>
-    <p class="modal-sub">Imprime cada cuenta y luego confirma la liquidación.</p>
+    <p class="modal-sub">Restaurantes con pedido activo en esta mesa. Imprime el ticket de consumo de cada uno y luego confirma la liquidación.</p>
     <div id="cuentasParaCerrar"></div>
     <label class="field">Propina (opcional)</label>
     <div class="propina-row" id="propinaRow">
@@ -1611,23 +1747,48 @@ window.abrirCerrarMesa = function(mesaId){
       <button class="btn" data-prop="10">10%</button>
       <button class="btn" data-prop="15">15%</button>
     </div>
+    <div class="total-row"><span>Total de la mesa</span><span id="totalCerrarMesa">$0</span></div>
     <button class="btn btn-danger btn-block" style="margin-top:16px" id="btnConfirmarLiquidar">Confirmar liquidación y liberar mesa</button>
   `, {wide:true});
+
   const zone = overlay.querySelector('#cuentasParaCerrar');
   function pintarCuentas(){
-    zone.innerHTML = cuentas.map(c=>{
-      const subtotal = c.id==='__total__' ? totalMesa(mesaId) : totalesCliente(mesaId, c.id);
-      const t = calcularTotales(subtotal, propinaPct);
-      return `<div class="linea-item"><span>${c.nombre}</span><span style="display:flex;gap:10px;align-items:center">${money(t.total)} <button class="btn btn-sm" data-imprimir="${c.id}">🖨️ Imprimir</button></span></div>`;
-    }).join('');
-    zone.querySelectorAll('[data-imprimir]').forEach(btn=>{
-      btn.addEventListener('click', ()=>{
-        const cid = btn.getAttribute('data-imprimir');
-        const cuenta = cid==='__total__' ? {id:'__total__', nombre:'Cuenta única'} : clientes.find(c=>c.id===cid);
-        const subtotal = cid==='__total__' ? totalMesa(mesaId) : totalesCliente(mesaId, cid);
-        imprimirTicket(mesa, cuenta, mesaId, calcularTotales(subtotal, propinaPct));
+    const grupos = restaurantesConPedido(mesaId);
+    if(!grupos.length){
+      zone.innerHTML = '<p style="color:var(--muted)">Esta mesa no tiene pedidos registrados.</p>';
+    } else {
+      zone.innerHTML = grupos.map(g=>{
+        const t = calcularTotales(g.subtotal, propinaPct, g.restauranteId);
+        // Si la mesa es de cuentas separadas, además del ticket completo del
+        // restaurante se puede imprimir el de cada cliente por separado.
+        const porCliente = mesa.cuentas_separadas ? clientes.map(c=>{
+          const sub = g.items.filter(i=>i.cliente_id===c.id).reduce((s,i)=>s+Number(i.precio_unitario)*i.cantidad,0);
+          if(sub <= 0) return '';
+          const tc = calcularTotales(sub, propinaPct, g.restauranteId);
+          return `<div class="linea-item" style="padding-left:12px;font-size:12.5px;color:var(--muted)">
+              <span>${c.nombre}</span>
+              <span style="display:flex;gap:10px;align-items:center">${money(tc.total)} <button class="btn btn-sm" data-rest="${g.restauranteId||''}" data-cliente="${c.id}">🖨️</button></span>
+            </div>`;
+        }).join('') : '';
+        return `<div class="rest-cierre">
+            <div class="linea-item" style="font-weight:700">
+              <span>${g.nombre}</span>
+              <span style="display:flex;gap:10px;align-items:center">${money(t.total)} <button class="btn btn-sm" data-rest="${g.restauranteId||''}" data-cliente="">🖨️ Imprimir</button></span>
+            </div>
+            ${porCliente}
+          </div>`;
+      }).join('');
+      zone.querySelectorAll('[data-rest]').forEach(btn=>{
+        btn.addEventListener('click', ()=>{
+          const rid = btn.getAttribute('data-rest') || null;
+          const cid = btn.getAttribute('data-cliente') || null;
+          const cliente = cid ? clientes.find(c=>c.id===cid) : null;
+          imprimirTicketRestaurante(mesaId, rid, cliente, propinaPct);
+        });
       });
-    });
+    }
+    const lbl = overlay.querySelector('#totalCerrarMesa');
+    if(lbl) lbl.textContent = money(totalMesaConImpuestos(mesaId, propinaPct));
   }
   overlay.querySelectorAll('#propinaRow [data-prop]').forEach(b=> b.addEventListener('click', function(){
     overlay.querySelectorAll('#propinaRow [data-prop]').forEach(x=>x.classList.remove('btn-brand'));
@@ -1639,19 +1800,30 @@ window.abrirCerrarMesa = function(mesaId){
   overlay.querySelector('#btnConfirmarLiquidar').addEventListener('click', ()=> liquidarMesa(mesaId, overlay, ()=>propinaPct));
 }
 
-async function imprimirTicket(mesa, cuenta, mesaId, totales){
-  const items = cuenta.id==='__total__' ? (state.pedidosPorMesa[mesaId]||[]) : (state.pedidosPorMesa[mesaId]||[]).filter(i=>i.cliente_id===cuenta.id);
+/* Imprime (y guarda en el historial) el ticket de consumo de UN restaurante:
+   de toda la mesa, o solo de un cliente si se pasa uno. */
+async function imprimirTicketRestaurante(mesaId, restauranteId, cliente, propinaPct){
+  const mesa = state.mesas.find(m=>m.id===mesaId);
+  if(!mesa) return;
+  const items = (state.pedidosPorMesa[mesaId]||[]).filter(i=>{
+    const mismoRest = (i.restaurante_id || null) === (restauranteId || null);
+    const mismoCliente = !cliente || i.cliente_id === cliente.id;
+    return mismoRest && mismoCliente;
+  });
+  if(!items.length){ toast('No hay productos de ese restaurante en esta mesa','err'); return; }
   const subtotal = items.reduce((s,i)=> s+Number(i.precio_unitario)*i.cantidad, 0);
-  const t = totales || calcularTotales(subtotal);
+  const t = calcularTotales(subtotal, propinaPct||0, restauranteId);
+  const restNombre = restauranteId ? nombreRestaurante(restauranteId) : 'Plaza';
+  const nombreCuenta = cliente ? cliente.nombre : (mesa.cuentas_separadas ? 'Consumo completo' : 'Cuenta única');
 
   let numeroTicket = null;
   try{
     const { data, error } = await supa.from('tickets').insert({
-      restaurante_id: state.restaurante.id,
+      restaurante_id: restauranteId || restauranteBaseId(),
       mesero_id: mesa.mesero_id || (state.mesero?state.mesero.id:null),
-      mesero_nombre: (state.mesero && state.mesero.id===mesa.mesero_id) ? state.mesero.nombre : nombreMeseroCruce(mesa.mesero_id),
+      mesero_nombre: state.mesero ? state.mesero.nombre : nombreMeseroCruce(mesa.mesero_id),
       mesa_nombre: mesa.nombre,
-      cliente_nombre: cuenta.nombre,
+      cliente_nombre: nombreCuenta,
       items: items,
       subtotal: t.subtotal, impuestos: t.totalImpuestos, propina: t.propina, total: t.total
     }).select('numero').single();
@@ -1659,7 +1831,7 @@ async function imprimirTicket(mesa, cuenta, mesaId, totales){
   }catch(err){ console.error('No se pudo guardar el ticket en el historial', err); }
 
   imprimirTicketHTML({
-    restauranteNombre: state.restaurante.nombre, mesaNombre: mesa.nombre, clienteNombre: cuenta.nombre,
+    restauranteNombre: restNombre, mesaNombre: mesa.nombre, clienteNombre: nombreCuenta,
     fecha: new Date().toLocaleString('es-CO'), items, totales: t, numero: numeroTicket
   });
 }
@@ -1687,28 +1859,35 @@ function imprimirTicketHTML({restauranteNombre, mesaNombre, clienteNombre, fecha
 async function liquidarMesa(mesaId, overlay, getPropinaPct){
   const mesa = state.mesas.find(m=>m.id===mesaId);
   const clientes = state.clientesPorMesa[mesaId]||[];
-  const items = state.pedidosPorMesa[mesaId]||[];
   const propinaPct = getPropinaPct ? getPropinaPct() : 0;
-  const subtotal = totalMesa(mesaId);
-  const t = calcularTotales(subtotal, propinaPct);
-  const cuentasJson = mesa.cuentas_separadas
-    ? clientes.map(c=>({cliente:c.nombre, total:calcularTotales(totalesCliente(mesaId,c.id), propinaPct).total, items: items.filter(i=>i.cliente_id===c.id)}))
-    : [{cliente:'Cuenta única', total:t.total, items}];
+  const grupos = restaurantesConPedido(mesaId);
 
-  await supa.from('mesas_liquidadas').insert({
-    mesa_nombre: mesa.nombre, restaurante_id: state.restaurante.id, mesero_id: mesa.mesero_id,
-    total: t.total, subtotal: t.subtotal, impuestos: t.totalImpuestos, propina: t.propina, cuentas: cuentasJson
-  });
+  // Se guarda UNA liquidación por restaurante: así cada restaurante ve en sus
+  // reportes solo lo que se le cargó a él.
+  for(const g of grupos){
+    const t = calcularTotales(g.subtotal, propinaPct, g.restauranteId);
+    const cuentasJson = mesa.cuentas_separadas
+      ? clientes.map(c=>{
+          const itemsC = g.items.filter(i=>i.cliente_id===c.id);
+          const subC = itemsC.reduce((s,i)=>s+Number(i.precio_unitario)*i.cantidad,0);
+          return { cliente:c.nombre, total: calcularTotales(subC, propinaPct, g.restauranteId).total, items: itemsC };
+        }).filter(c=>c.items.length)
+      : [{cliente:'Cuenta única', total:t.total, items:g.items}];
+    await supa.from('mesas_liquidadas').insert({
+      mesa_nombre: mesa.nombre, restaurante_id: g.restauranteId || restauranteBaseId(), mesero_id: mesa.mesero_id,
+      total: t.total, subtotal: t.subtotal, impuestos: t.totalImpuestos, propina: t.propina, cuentas: cuentasJson
+    });
+  }
+
   // limpiar mesa
   await supa.from('pedidos_items').delete().eq('mesa_id', mesaId);
-  const sillaIds = (state.sillasPorMesa[mesaId]||[]).map(s=>s.id);
   await supa.from('sillas').delete().eq('mesa_id', mesaId);
   await supa.from('clientes').delete().eq('mesa_id', mesaId);
   await supa.from('mesas').update({estado:'libre', num_clientes:0, cuentas_separadas:false, mesero_id:null}).eq('id', mesaId);
 
   await recargarMesa(mesaId);
   cerrarModal(overlay);
-  toast('Mesa liquidada y liberada');
+  toast(grupos.length>1 ? 'Mesa liquidada — '+grupos.length+' restaurantes' : 'Mesa liquidada y liberada');
 }
 
 /* =============================================================
@@ -1719,10 +1898,9 @@ window.abrirLiquidarCliente = function(mesaId, clienteId){
   const cliente = (state.clientesPorMesa[mesaId]||[]).find(c=>c.id===clienteId);
   if(!mesa || !cliente) return;
   let propinaPct = 0;
-  const subtotal = totalesCliente(mesaId, clienteId);
   const overlay = abrirModal(`
     <div class="modal-head"><h3>Liquidar a ${cliente.nombre}</h3><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button></div>
-    <p class="modal-sub">Cobra su consumo y libéralo de la mesa. El resto de la mesa sigue activa.</p>
+    <p class="modal-sub">Cobra su consumo y libéralo de la mesa. Cada restaurante lleva su propio ticket. El resto de la mesa sigue activa.</p>
     <div id="liqClienteDetalle"></div>
     <label class="field">Propina (opcional)</label>
     <div class="propina-row" id="propinaRowCliente">
@@ -1731,20 +1909,35 @@ window.abrirLiquidarCliente = function(mesaId, clienteId){
       <button class="btn" data-prop="15">15%</button>
     </div>
     <div class="actions-bar">
-      <button class="btn" id="btnImprimirCliente">🖨️ Imprimir valor a pagar</button>
       <button class="btn btn-danger" id="btnConfirmarLiquidarCliente">Confirmar y retirar</button>
     </div>
   `, {wide:true});
+
   function pintarDetalle(){
-    const items = (state.pedidosPorMesa[mesaId]||[]).filter(i=>i.cliente_id===clienteId);
-    const t = calcularTotales(subtotal, propinaPct);
-    overlay.querySelector('#liqClienteDetalle').innerHTML = `
-      ${items.map(i=>`<div class="linea-item"><span>${i.producto_nombre} <span class="qty">x${i.cantidad}</span></span><span>${money(i.precio_unitario*i.cantidad)}</span></div>`).join('') || '<p style="color:var(--muted);font-size:13px">Sin productos registrados.</p>'}
-      <div class="impuesto-line"><span>Subtotal</span><span>${money(t.subtotal)}</span></div>
-      ${t.lineasImpuestos.map(l=>`<div class="impuesto-line"><span>${l.nombre} (${l.porcentaje}%)</span><span>${money(l.valor)}</span></div>`).join('')}
-      ${t.propinaPct>0 ? `<div class="impuesto-line"><span>Propina (${t.propinaPct}%)</span><span>${money(t.propina)}</span></div>` : ''}
-      <div class="total-row"><span>Total a pagar</span><span>${money(t.total)}</span></div>
-    `;
+    const grupos = restaurantesConPedido(mesaId, clienteId);
+    const cont = overlay.querySelector('#liqClienteDetalle');
+    if(!grupos.length){
+      cont.innerHTML = '<p style="color:var(--muted);font-size:13px">Sin productos registrados.</p>';
+      return;
+    }
+    let total = 0;
+    cont.innerHTML = grupos.map(g=>{
+      const t = calcularTotales(g.subtotal, propinaPct, g.restauranteId);
+      total += t.total;
+      return `<div class="rest-cierre">
+          <div class="rest-pedido-head" style="margin-top:4px">${g.nombre}</div>
+          ${g.items.map(i=>`<div class="linea-item"><span>${i.producto_nombre} <span class="qty">x${i.cantidad}</span></span><span>${money(i.precio_unitario*i.cantidad)}</span></div>`).join('')}
+          ${t.lineasImpuestos.map(l=>`<div class="impuesto-line"><span>${l.nombre} (${l.porcentaje}%)</span><span>${money(l.valor)}</span></div>`).join('')}
+          ${t.propinaPct>0 ? `<div class="impuesto-line"><span>Propina (${t.propinaPct}%)</span><span>${money(t.propina)}</span></div>` : ''}
+          <div class="linea-item" style="font-weight:700">
+            <span>Total ${g.nombre}</span>
+            <span style="display:flex;gap:10px;align-items:center">${money(t.total)} <button class="btn btn-sm" data-liq-rest="${g.restauranteId||''}">🖨️ Imprimir</button></span>
+          </div>
+        </div>`;
+    }).join('') + `<div class="total-row"><span>Total a pagar</span><span>${money(total)}</span></div>`;
+    cont.querySelectorAll('[data-liq-rest]').forEach(btn=>{
+      btn.addEventListener('click', ()=> imprimirTicketRestaurante(mesaId, btn.getAttribute('data-liq-rest') || null, cliente, propinaPct));
+    });
   }
   overlay.querySelectorAll('#propinaRowCliente [data-prop]').forEach(b=> b.addEventListener('click', function(){
     overlay.querySelectorAll('#propinaRowCliente [data-prop]').forEach(x=>x.classList.remove('btn-brand'));
@@ -1753,9 +1946,6 @@ window.abrirLiquidarCliente = function(mesaId, clienteId){
     pintarDetalle();
   }));
   pintarDetalle();
-  overlay.querySelector('#btnImprimirCliente').addEventListener('click', ()=>{
-    imprimirTicket(mesa, cliente, mesaId, calcularTotales(subtotal, propinaPct));
-  });
   overlay.querySelector('#btnConfirmarLiquidarCliente').addEventListener('click', async ()=>{
     await liquidarClienteIndividual(mesaId, cliente, propinaPct);
     cerrarModal(overlay);
@@ -1764,14 +1954,16 @@ window.abrirLiquidarCliente = function(mesaId, clienteId){
 
 async function liquidarClienteIndividual(mesaId, cliente, propinaPct){
   const mesa = state.mesas.find(m=>m.id===mesaId);
-  const items = (state.pedidosPorMesa[mesaId]||[]).filter(i=>i.cliente_id===cliente.id);
-  const t = calcularTotales(totalesCliente(mesaId, cliente.id), propinaPct);
+  const grupos = restaurantesConPedido(mesaId, cliente.id);
 
-  await supa.from('clientes_liquidados').insert({
-    mesa_nombre: mesa.nombre, restaurante_id: state.restaurante.id, mesero_id: mesa.mesero_id,
-    cliente_nombre: cliente.nombre, subtotal: t.subtotal, impuestos: t.totalImpuestos, propina: t.propina, total: t.total,
-    items: items
-  });
+  for(const g of grupos){
+    const t = calcularTotales(g.subtotal, propinaPct, g.restauranteId);
+    await supa.from('clientes_liquidados').insert({
+      mesa_nombre: mesa.nombre, restaurante_id: g.restauranteId || restauranteBaseId(), mesero_id: mesa.mesero_id,
+      cliente_nombre: cliente.nombre, subtotal: t.subtotal, impuestos: t.totalImpuestos, propina: t.propina, total: t.total,
+      items: g.items
+    });
+  }
   await supa.from('pedidos_items').delete().eq('cliente_id', cliente.id);
   await supa.from('sillas').update({cliente_id:null}).eq('id', cliente.silla_id);
   await supa.from('clientes').delete().eq('id', cliente.id);
@@ -1785,9 +1977,11 @@ async function liquidarClienteIndividual(mesaId, cliente, propinaPct){
    ============================================================= */
 window.abrirInventario = function(){
   const puedeEditar = state.esAdmin;
+  // El mesero ve el inventario de toda la plaza, con el restaurante de cada producto.
+  const mostrarRest = !state.esAdmin;
   const overlay = abrirModal(`
-    <div class="modal-head"><h3>Inventario</h3><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button></div>
-    <table class="data-table"><thead><tr><th></th><th>Producto</th><th>Categoría</th><th>Precio</th><th>Stock</th>${puedeEditar?'<th></th>':''}</tr></thead>
+    <div class="modal-head"><h3>Inventario${mostrarRest?' de la plaza':''}</h3><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button></div>
+    <table class="data-table"><thead><tr><th></th><th>Producto</th>${mostrarRest?'<th>Restaurante</th>':''}<th>Categoría</th><th>Precio</th><th>Stock</th>${puedeEditar?'<th></th>':''}</tr></thead>
     <tbody id="invTbody"></tbody></table>
     ${puedeEditar ? '<button class="btn btn-sm" style="margin-top:12px" id="btnNuevoProducto">+ Nuevo producto</button>' : ''}
   `, {wide:true});
@@ -1796,10 +1990,11 @@ window.abrirInventario = function(){
 }
 function pintarInventario(overlay, puedeEditar){
   const tbody = overlay.querySelector('#invTbody');
+  const mostrarRest = !state.esAdmin;
   tbody.innerHTML = state.productos.map(p=>`
     <tr>
       <td>${p.imagen?`<img src="${p.imagen}" class="prod-thumb">`:'<div class="prod-thumb-empty">📦</div>'}</td>
-      <td>${p.nombre}</td><td>${p.categoria}</td><td>${money(p.precio)}</td><td>${p.cantidad!=null?p.cantidad:'—'}</td>
+      <td>${p.nombre}</td>${mostrarRest?`<td>${nombreRestaurante(p.restaurante_id)}</td>`:''}<td>${p.categoria}</td><td>${money(p.precio)}</td><td>${p.cantidad!=null?p.cantidad:'—'}</td>
       ${puedeEditar ? `<td><button class="btn btn-sm" data-editar="${p.id}">✏️</button></td>` : ''}
     </tr>`).join('');
   if(puedeEditar) tbody.querySelectorAll('[data-editar]').forEach(b=> b.addEventListener('click', ()=> formularioProducto(b.getAttribute('data-editar'), overlay)));
@@ -1897,6 +2092,7 @@ document.getElementById('btnInventarioTop').addEventListener('click', abrirInven
    DASHBOARD MESERO — "Mis mesas"
    ============================================================= */
 document.getElementById('btnMisMesas').addEventListener('click', async ()=>{
+  if(!state.mesero){ toast('Solo disponible cuando entras como mesero','err'); return; }
   document.getElementById('meseroDashWho').textContent = state.mesero.nombre;
   await pintarDashboardMesero('activas');
   showOnly('screen-mesero-dash');
@@ -1911,8 +2107,12 @@ async function pintarDashboardMesero(tab){
   const { data: liquidadasTodas } = await supa.from('mesas_liquidadas').select('*').eq('mesero_id', state.mesero.id).order('liquidada_en', {ascending:false});
   const hoyStr = new Date().toDateString();
   const liquidadasHoy = (liquidadasTodas||[]).filter(l=> new Date(l.liquidada_en).toDateString() === hoyStr);
+  // Una mesa con pedidos de varios restaurantes genera una liquidación por
+  // restaurante, así que para contar "mesas" se agrupan por mesa + momento.
+  const claveMesa = l => (l.mesa_nombre||'') + '|' + new Date(l.liquidada_en).toISOString().slice(0,16);
+  const mesasLiquidadasHoy = new Set(liquidadasHoy.map(claveMesa)).size;
   document.getElementById('kpiAtendidas').textContent = activas.length;
-  document.getElementById('kpiLiquidadasHoy').textContent = liquidadasHoy.length;
+  document.getElementById('kpiLiquidadasHoy').textContent = mesasLiquidadasHoy;
   document.getElementById('kpiTotalHoy').textContent = money(liquidadasHoy.reduce((s,l)=>s+Number(l.total),0));
 
   const content = document.getElementById('meseroDashContent');
@@ -1921,8 +2121,8 @@ async function pintarDashboardMesero(tab){
       ${activas.map(m=>`<tr><td>${m.nombre}</td><td>${m.num_clientes}</td><td>${money(totalMesa(m.id))}</td></tr>`).join('')}
     </tbody></table>` : '<p style="color:var(--muted)">No tienes mesas activas.</p>';
   } else {
-    content.innerHTML = (liquidadasTodas&&liquidadasTodas.length) ? `<table class="data-table"><thead><tr><th>Mesa</th><th>Fecha</th><th>Total</th></tr></thead><tbody>
-      ${liquidadasTodas.map(l=>`<tr><td>${l.mesa_nombre}</td><td>${new Date(l.liquidada_en).toLocaleString('es-CO')}</td><td>${money(l.total)}</td></tr>`).join('')}
+    content.innerHTML = (liquidadasTodas&&liquidadasTodas.length) ? `<table class="data-table"><thead><tr><th>Mesa</th><th>Restaurante</th><th>Fecha</th><th>Total</th></tr></thead><tbody>
+      ${liquidadasTodas.map(l=>`<tr><td>${l.mesa_nombre}</td><td>${nombreRestaurante(l.restaurante_id)}</td><td>${new Date(l.liquidada_en).toLocaleString('es-CO')}</td><td>${money(l.total)}</td></tr>`).join('')}
     </tbody></table>` : '<p style="color:var(--muted)">Aún no has liquidado mesas.</p>';
   }
 }
@@ -1943,7 +2143,8 @@ async function renderTab(tab){
     const totalGeneral = (liq||[]).reduce((s,l)=>s+Number(l.total),0);
     const porMesero = {};
     (liq||[]).forEach(l=>{ const key=l.mesero_id||'—'; porMesero[key]=(porMesero[key]||0)+Number(l.total); });
-    const meseros = await supa.from('meseros').select('*').eq('restaurante_id', state.restaurante.id);
+    // los meseros son de la plaza (sin restaurante asignado): se traen todos
+    const meseros = await supa.from('meseros').select('*');
     const nombreMesero = id => (meseros.data||[]).find(m=>m.id===id)?.nombre || 'Sin mesero';
     el.innerHTML = `
       <div class="kpi-row">
@@ -1962,7 +2163,7 @@ async function renderTab(tab){
   }
   if(tab==='cruce'){
     const { data: liq } = await supa.from('mesas_liquidadas').select('*').eq('restaurante_id', state.restaurante.id).order('liquidada_en',{ascending:false});
-    const { data: ms } = await supa.from('meseros').select('*').eq('restaurante_id', state.restaurante.id).order('nombre');
+    const { data: ms } = await supa.from('meseros').select('*').order('nombre');
     state._cruceLiq = liq || [];
     state._cruceMeseros = ms || [];
     el.innerHTML = `
@@ -2039,10 +2240,13 @@ async function renderTab(tab){
     document.getElementById('btnBuscarBt').addEventListener('click', buscarImpresoraBluetooth);
   }
   if(tab==='meseros'){
-    const { data: ms } = await supa.from('meseros').select('*').eq('restaurante_id', state.restaurante.id).order('nombre');
-    el.innerHTML = `<div class="row-between"><h4>Meseros</h4><button class="btn btn-sm btn-brand" id="btnNuevoMesero">+ Nuevo mesero</button></div>
-      <table class="data-table"><thead><tr><th>Nombre</th><th>PIN</th><th>Activo</th><th></th></tr></thead><tbody>
-      ${(ms||[]).map(m=>`<tr><td>${m.nombre}</td><td>${m.pin}</td><td>${m.activo?'Sí':'No'}</td><td><button class="btn btn-sm" data-editar-mesero="${m.id}">✏️</button></td></tr>`).join('')}
+    // Los meseros son de la PLAZA: entran sin restaurante asignado y pueden
+    // cargarle el pedido a cualquier restaurante, así que se listan todos.
+    const { data: ms } = await supa.from('meseros').select('*').order('nombre');
+    el.innerHTML = `<div class="row-between"><h4>Meseros de la plaza</h4><button class="btn btn-sm btn-brand" id="btnNuevoMesero">+ Nuevo mesero</button></div>
+      <p class="modal-sub" style="margin-bottom:10px">Los meseros entran con logeo libre: no pertenecen a un restaurante y pueden tomar pedidos para cualquiera de la plaza.</p>
+      <table class="data-table"><thead><tr><th>Nombre</th><th>PIN</th><th>Activo</th><th>Creado desde</th><th></th></tr></thead><tbody>
+      ${(ms||[]).map(m=>`<tr><td>${m.nombre}</td><td>${m.pin}</td><td>${m.activo?'Sí':'No'}</td><td style="color:var(--muted)">${nombreRestaurante(m.restaurante_id)}</td><td><button class="btn btn-sm" data-editar-mesero="${m.id}">✏️</button></td></tr>`).join('')}
       </tbody></table>`;
     document.getElementById('btnNuevoMesero').addEventListener('click', ()=> formularioMesero(null));
     el.querySelectorAll('[data-editar-mesero]').forEach(b=> b.addEventListener('click', ()=> formularioMesero(b.getAttribute('data-editar-mesero'), ms)));
@@ -2148,7 +2352,7 @@ function reimprimirTicketGuardado(t){
     lineasImpuestos: []
   };
   imprimirTicketHTML({
-    restauranteNombre: state.restaurante.nombre, mesaNombre: t.mesa_nombre, clienteNombre: t.cliente_nombre,
+    restauranteNombre: nombreRestaurante(t.restaurante_id), mesaNombre: t.mesa_nombre, clienteNombre: t.cliente_nombre,
     fecha: new Date(t.creado_en).toLocaleString('es-CO'), items: t.items||[], totales, numero: t.numero, reimpresion:true
   });
 }
